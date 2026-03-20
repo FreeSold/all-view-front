@@ -18,13 +18,17 @@ export type PhotoImage = {
 
 export type PhotoUi = {
   theme?: 'light' | 'dark'
+  /** 存盘可为历史 `auto`，界面仅提供缩略图 / 列表 */
   viewMode?: 'auto' | 'grid' | 'list'
   activeFolderId?: string
   filters?: {
     formats?: string[]
     sizes?: string[]
     orient?: string[]
+    /** 仅匹配用户自定义标签（#xxx） */
     tags?: string[]
+    /** 按文件修改时间 createdAt 筛选（闭区间，毫秒） */
+    fileTimeRange?: { startMs: number; endMs: number }
   }
   sortRules?: string[]
 }

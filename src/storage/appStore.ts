@@ -92,6 +92,7 @@ function getDefaultData(): AppData {
     },
   ]
   return {
+    mediaUi: {},
     roles: [
       { id: 'r_admin', name: '管理员', code: 'admin', description: '系统全权限（Demo）', createdAt: now() },
       { id: 'r_operator', name: '运营', code: 'operator', description: '部分功能可见（Demo）', createdAt: now() },
@@ -130,6 +131,9 @@ function parseData(raw: string): AppData | null {
     data.config = { ...defaultConfig, ...data.config }
     if (!Array.isArray(data.videos)) data.videos = []
     if (!Array.isArray((data as Partial<AppData>).comics)) (data as Partial<AppData>).comics = []
+    if (!(data as Partial<AppData>).mediaUi || typeof (data as Partial<AppData>).mediaUi !== 'object') {
+      ;(data as Partial<AppData>).mediaUi = {}
+    }
     // 迁移旧数据：补齐视频的分类字段
     data.videos = data.videos.map((v) => {
       const playCount = v.playCount ?? 0
@@ -195,6 +199,7 @@ function loadFromBrowser(): AppData {
             videos: [],
             comics: [],
             config: defaultConfig,
+            mediaUi: {},
           })
           localStorage.setItem(BROWSER_STORAGE_KEY, raw)
           localStorage.removeItem(LEGACY_STORAGE_KEY)

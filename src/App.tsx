@@ -11,6 +11,8 @@ import { VideoManagementPage } from './pages/VideoManagementPage'
 import { ComicManagementPage } from './pages/ComicManagementPage'
 import PhotoManagementPage from './pages/PhotoManagementPage'
 import { NotFoundPage } from './pages/NotFoundPage'
+import { AppShellProvider } from './context/AppShellContext'
+import { GlobalLogProvider } from './context/GlobalLogContext'
 import { PhotoFolderProvider } from './context/PhotoFolderContext'
 import { PhotoStateProvider } from './context/PhotoStateContext'
 import { ThemeProvider } from './theme/ThemeContext'
@@ -29,11 +31,15 @@ export default function App() {
               path="/app"
               element={
                 <RequireAuth>
-                  <PhotoStateProvider>
-                    <PhotoFolderProvider>
-                      <AdminLayout />
-                    </PhotoFolderProvider>
-                  </PhotoStateProvider>
+                  <GlobalLogProvider>
+                    <PhotoStateProvider>
+                      <PhotoFolderProvider>
+                        <AppShellProvider>
+                          <AdminLayout />
+                        </AppShellProvider>
+                      </PhotoFolderProvider>
+                    </PhotoStateProvider>
+                  </GlobalLogProvider>
                 </RequireAuth>
               }
             >

@@ -95,7 +95,7 @@ export function CoverCropModal({ open, imageSrc, onConfirm, onCancel }: CoverCro
       onOk={handleConfirm}
       onCancel={onCancel}
       confirmLoading={loading}
-      destroyOnClose
+      destroyOnHidden
     >
       <div style={{ maxHeight: 400, overflow: 'auto' }}>
         <ReactCrop

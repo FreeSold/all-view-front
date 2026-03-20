@@ -12,36 +12,25 @@ export function sizeBucket(sizeBytes: number | undefined): 'small' | 'medium' | 
   return 'xlarge'
 }
 
+/** 与筛选「大小」选项文案一致 */
 export const SIZE_LABELS: Record<string, string> = {
-  small: '小 (<2MB)',
-  medium: '中 (2-8MB)',
-  large: '大 (8-25MB)',
-  xlarge: '超大 (>25MB)',
+  small: '小于约 2MB',
+  medium: '约 2MB～8MB',
+  large: '约 8MB～25MB',
+  xlarge: '大于约 25MB',
 }
 
-export function computeAutoTags(params: {
-  ext?: string
-  sizeBytes?: number
-  width?: number
-  height?: number
-  createdAt?: number
-}): string[] {
+/**
+ * 自动标签：不再生成与「格式 / 大小 / 方向 / 时间」筛选重复的标签，
+ * 仅保留宽高比（比例），便于快速浏览；分类请用左侧目录与筛选区。
+ */
+export function computeAutoTags(params: { width?: number; height?: number }): string[] {
   const tags: string[] = []
-  if (params.ext) tags.push(`#format:${String(params.ext).toLowerCase()}`)
-  tags.push(`#size:${sizeBucket(params.sizeBytes)}`)
-
-  if (params.width != null && params.height != null) {
-    tags.push(
-      `#orientation:${params.width >= params.height ? 'landscape' : 'portrait'}`
-    )
+  if (params.width != null && params.height != null && params.width > 0 && params.height > 0) {
     const g = gcd(params.width, params.height)
     const rw = Math.round(params.width / g)
     const rh = Math.round(params.height / g)
-    tags.push(`#ratio:${rw}:${rh}`)
-  }
-  if (params.createdAt != null) {
-    const d = new Date(params.createdAt)
-    if (!Number.isNaN(d.getTime())) tags.push(`#createdYear:${d.getFullYear()}`)
+    tags.push(`比例 ${rw}∶${rh}`)
   }
   return tags
 }

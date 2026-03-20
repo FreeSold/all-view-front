@@ -1,18 +1,15 @@
-import {
-  FolderOpenOutlined,
-  InboxOutlined,
-  PictureOutlined,
-  PlusOutlined,
-} from '@ant-design/icons'
+import { CaretDownOutlined, CaretUpOutlined, InboxOutlined, PictureOutlined } from '@ant-design/icons'
 import {
   Alert,
   Button,
   Card,
   Col,
+  DatePicker,
   Empty,
   Image,
   Input,
   List,
+  Modal,
   Popover,
   Row,
   Select,
@@ -21,19 +18,44 @@ import {
   Typography,
   message,
 } from 'antd'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { Dayjs } from 'dayjs'
+import dayjs from 'dayjs'
+import type { CSSProperties } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { useAppShell } from '../context/AppShellContext'
 import { usePhotoFolder } from '../context/PhotoFolderContext'
 import { usePhotoStateContext } from '../context/PhotoStateContext'
+import { PhotoPageToolbar } from './PhotoManagement/PhotoPageToolbar'
 import type { PhotoImage } from '../storage/photoTypes'
+
+type PhotoListFilterField = 'name' | 'id' | 'path' | 'tags' | 'ext'
+
+/** 筛选卡片内：小字号、少占位 */
+const FILTER_LABEL: CSSProperties = {
+  fontSize: 12,
+  lineHeight: '18px',
+  flexShrink: 0,
+}
+const FILTER_TAG: CSSProperties = {
+  fontSize: 11,
+  lineHeight: '18px',
+  marginInlineEnd: 0,
+  padding: '0 5px',
+  cursor: 'pointer',
+}
 
 function ThumbImage({
   img,
   size = 140,
   loadThumb,
+  onOpen,
 }: {
   img: PhotoImage & { displayName?: string }
   size?: number
   loadThumb: (relPath: string | undefined) => Promise<string>
+  /** 传入时：点击缩略图打开大图（关闭 antd 内置预览，避免误触） */
+  onOpen?: () => void
 }) {
   const [src, setSrc] = useState<string>('')
   useEffect(() => {
@@ -46,12 +68,41 @@ function ThumbImage({
     }
   }, [img.thumbRelPath, loadThumb])
   return (
-    <div style={{ width: size, height: size, overflow: 'hidden', background: '#f0f0f0' }}>
+    <div
+      role={onOpen ? 'button' : undefined}
+      tabIndex={onOpen ? 0 : undefined}
+      onKeyDown={
+        onOpen
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                onOpen()
+              }
+            }
+          : undefined
+      }
+      onClick={
+        onOpen
+          ? (e) => {
+              e.stopPropagation()
+              onOpen()
+            }
+          : undefined
+      }
+      style={{
+        width: size,
+        height: size,
+        overflow: 'hidden',
+        background: '#f0f0f0',
+        cursor: onOpen ? 'pointer' : undefined,
+      }}
+    >
       {src ? (
         <Image
           src={src}
           alt={img.displayName ?? img.originalName}
-          style={{ width: size, height: size, objectFit: 'cover' }}
+          style={{ width: size, height: size, objectFit: 'cover', pointerEvents: 'none' }}
+          preview={false}
         />
       ) : (
         <div
@@ -81,13 +132,57 @@ function formatBytes(bytes: number): string {
   return `${b} B`
 }
 
+function formatModifiedTime(ms: number | undefined): string {
+  if (ms == null || Number.isNaN(ms)) return '—'
+  return dayjs(ms).format('YYYY-MM-DD HH:mm')
+}
+
+/** 第一行：文件名居左；类型、大小、像素、修改时间整体靠右对齐 */
+function PhotoTitleRow({ img }: { img: PhotoImage & { displayName?: string } }) {
+  const name = img.displayName ?? img.originalName ?? ''
+  const ext = (img.ext ?? '?').toUpperCase()
+  const wh =
+    img.width != null && img.height != null && img.width > 0 && img.height > 0
+      ? `${img.width}×${img.height}`
+      : '—'
+  const meta = `${ext} · ${formatBytes(img.sizeBytes)} · ${wh} · ${formatModifiedTime(img.createdAt)}`
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0, 1fr) minmax(0, max-content)',
+        alignItems: 'baseline',
+        columnGap: 12,
+        width: '100%',
+      }}
+    >
+      <Typography.Text strong ellipsis={{ tooltip: name }} style={{ minWidth: 0 }}>
+        {name}
+      </Typography.Text>
+      <Typography.Text
+        type="secondary"
+        ellipsis={{ tooltip: meta }}
+        style={{
+          fontSize: 12,
+          textAlign: 'right',
+          minWidth: 0,
+          maxWidth: '100%',
+        }}
+      >
+        {meta}
+      </Typography.Text>
+    </div>
+  )
+}
+
 export default function PhotoManagementPage() {
+  const [searchParams] = useSearchParams()
   const photoFolder = usePhotoFolder()
+  const { setContentHeaderRight } = useAppShell()
   const {
     fs,
+    index,
     derived,
-    logLines,
-    pickRoot,
     setUi,
     setFilters,
     clearFilters,
@@ -99,6 +194,16 @@ export default function PhotoManagementPage() {
     isSupported,
     repo,
   } = usePhotoStateContext()
+
+  const [largePreview, setLargePreview] = useState<{ imgId: string; url: string } | null>(null)
+  const largePreviewUrlRef = useRef<string | null>(null)
+
+  /** 关键词筛选：列表与缩略图共用；分页仅列表模式生效 */
+  const [listKeyword, setListKeyword] = useState('')
+  const [listFilterField, setListFilterField] = useState<PhotoListFilterField>('name')
+  const [listPageSize, setListPageSize] = useState(10)
+  const [listPage, setListPage] = useState(1)
+  const [filterPanelExpanded, setFilterPanelExpanded] = useState(false)
 
   const [importOpen, setImportOpen] = useState(false)
   const [importFilesList, setImportFilesList] = useState<File[]>([])
@@ -128,11 +233,106 @@ export default function PhotoManagementPage() {
     }
   }, [photoFolder?.activeFolderId, derived.activeFolderId, setUi])
 
-  const effectiveViewMode = useMemo(() => {
-    const mode = derived.viewMode
-    if (mode !== 'auto') return mode
-    return 'grid'
+  const effectiveViewMode = useMemo((): 'grid' | 'list' => {
+    return derived.viewMode === 'list' ? 'list' : 'grid'
   }, [derived.viewMode])
+
+  const fileTimeRangePickerValue = useMemo((): [Dayjs, Dayjs] | null => {
+    const tr = derived.activeFilters?.fileTimeRange
+    if (tr == null) return null
+    return [dayjs(tr.startMs), dayjs(tr.endMs)]
+  }, [derived.activeFilters?.fileTimeRange])
+
+  const largePreviewImage = useMemo(() => {
+    if (!largePreview) return null
+    const fromResults = derived.results.find((x) => x.id === largePreview.imgId)
+    if (fromResults) return fromResults
+    const raw = index.images.find((x) => x.id === largePreview.imgId)
+    if (!raw) return null
+    return { ...raw, displayName: raw.originalName }
+  }, [largePreview, derived.results, index.images])
+
+  const closeLargePreview = useCallback(() => {
+    if (largePreviewUrlRef.current) {
+      URL.revokeObjectURL(largePreviewUrlRef.current)
+      largePreviewUrlRef.current = null
+    }
+    setLargePreview(null)
+  }, [])
+
+  const openLargePreview = useCallback(
+    async (img: PhotoImage & { displayName?: string }) => {
+      if (!fs.rootHandle) return
+      try {
+        if (largePreviewUrlRef.current) {
+          URL.revokeObjectURL(largePreviewUrlRef.current)
+          largePreviewUrlRef.current = null
+        }
+        const url = await repo.readBlobUrl(img.libraryRelPath)
+        largePreviewUrlRef.current = url
+        setLargePreview({ imgId: img.id, url })
+      } catch {
+        message.error('无法打开原图')
+      }
+    },
+    [fs.rootHandle, repo]
+  )
+
+  useEffect(() => {
+    return () => {
+      if (largePreviewUrlRef.current) {
+        URL.revokeObjectURL(largePreviewUrlRef.current)
+        largePreviewUrlRef.current = null
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    const q = searchParams.get('q')
+    if (q) {
+      setListKeyword(q)
+      setListFilterField('name')
+    }
+  }, [searchParams])
+
+  useEffect(() => {
+    setListPage(1)
+  }, [listKeyword, listFilterField, listPageSize])
+
+  const listFiltered = useMemo(() => {
+    const rows = derived.results
+    const k = listKeyword.trim().toLowerCase()
+    if (!k) return rows
+    const tokens = k.split(/\s+/).filter(Boolean)
+    if (!tokens.length) return rows
+
+    const match = (text: string) => {
+      const low = text.toLowerCase()
+      return tokens.every((t) => low.includes(t))
+    }
+
+    return rows.filter((img) => {
+      switch (listFilterField) {
+        case 'name':
+          return match(`${img.displayName ?? ''} ${img.originalName ?? ''}`)
+        case 'id':
+          return match(String(img.id ?? ''))
+        case 'path':
+          return match(String(img.libraryRelPath ?? ''))
+        case 'tags':
+          return match((img.userTags ?? []).join(' '))
+        case 'ext':
+          return match(String(img.ext ?? ''))
+        default:
+          return true
+      }
+    })
+  }, [derived.results, listKeyword, listFilterField])
+
+  const listMaxPage = Math.max(1, Math.ceil(listFiltered.length / listPageSize) || 1)
+  useEffect(() => {
+    if (listPage > listMaxPage) setListPage(listMaxPage)
+  }, [listPage, listMaxPage])
 
   const loadThumb = useCallback(
     async (relPath: string | undefined) => {
@@ -196,6 +396,20 @@ export default function PhotoManagementPage() {
     }
   }, [importFilesList, importFiles])
 
+  const openImport = useCallback(() => {
+    setImportFilesList([])
+    setImportOpen(true)
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!isSupported) {
+      setContentHeaderRight(null)
+      return () => setContentHeaderRight(null)
+    }
+    setContentHeaderRight(() => <PhotoPageToolbar onOpenImport={openImport} />)
+    return () => setContentHeaderRight(null)
+  }, [isSupported, setContentHeaderRight, openImport])
+
   if (!isSupported) {
     return (
       <Alert
@@ -207,75 +421,371 @@ export default function PhotoManagementPage() {
     )
   }
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 500 }}>
-      <div
+  const activeTagFilterCount = (derived.activeFilters?.tags ?? []).length
+
+  /** 列表 / 缩略图均显示关键词查询（此前仅在列表模式显示，易被误认为「查询被删」） */
+  const filterCardExtra = (
+    <Space wrap size={[4, 4]} style={{ justifyContent: 'flex-end' }}>
+      <Input
+        size="small"
+        placeholder="搜索"
+        value={listKeyword}
+        onChange={(e) => setListKeyword(e.target.value)}
+        style={{ width: 168 }}
+        allowClear
+      />
+      <Select<PhotoListFilterField>
+        size="small"
+        value={listFilterField}
+        onChange={setListFilterField}
+        options={[
+          { label: '文件名', value: 'name' },
+          { label: '图片 ID', value: 'id' },
+          { label: '路径', value: 'path' },
+          { label: '标签', value: 'tags' },
+          { label: '格式', value: 'ext' },
+        ]}
+        style={{ width: 100 }}
+      />
+    </Space>
+  )
+
+  const filterCardTitle = (
+    <Space wrap align="center" size={6}>
+      <Typography.Text strong style={{ fontSize: 13, lineHeight: '22px' }}>
+        筛选与排序
+      </Typography.Text>
+      <Button
+        type="link"
+        size="small"
+        onClick={() => setFilterPanelExpanded((v) => !v)}
         style={{
-          display: 'flex',
+          padding: '0 4px',
+          height: 22,
+          fontSize: 12,
+          display: 'inline-flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: 16,
-          flexWrap: 'wrap',
-          gap: 8,
+          gap: 4,
         }}
       >
-        <Space wrap>
-          <Typography.Text strong>
-            {fs.rootHandle
-              ? `数据目录：${fs.rootName}`
-              : '未选择数据目录（需要授权）'}
-          </Typography.Text>
-          <Button type="primary" icon={<FolderOpenOutlined />} onClick={pickRoot}>
-            选择数据目录
-          </Button>
-          <Button
-            icon={<PlusOutlined />}
-            disabled={!fs.rootHandle}
-            onClick={() => {
-              setImportFilesList([])
-              setImportOpen(true)
-            }}
-          >
-            导入图片
-          </Button>
-        </Space>
-        <Space>
-          <Select
-            value={derived.viewMode as 'auto' | 'grid' | 'list'}
-            onChange={(v) => setUi({ viewMode: v as 'auto' | 'grid' | 'list' })}
-            options={[
-              { value: 'auto', label: '自动' },
-              { value: 'grid', label: '缩略图' },
-              { value: 'list', label: '列表' },
-            ]}
-            style={{ width: 100 }}
-          />
-        </Space>
-      </div>
+        {filterPanelExpanded ? (
+          <>
+            折叠
+            <CaretUpOutlined style={{ fontSize: 10 }} />
+          </>
+        ) : (
+          <>
+            展开
+            <CaretDownOutlined style={{ fontSize: 10 }} />
+          </>
+        )}
+      </Button>
+      {derived.hasActiveFilters ? (
+        <Tag color="processing" style={{ ...FILTER_TAG, cursor: 'default' }}>
+          筛选已启用
+        </Tag>
+      ) : null}
+    </Space>
+  )
 
-      <Row gutter={16} style={{ flex: 1, minHeight: 0 }}>
-        <Col xs={24} lg={16}>
-          <Card
-            size="small"
-            title={
-              <Space>
-                <span>{derived.results.length} 张</span>
-                {derived.hasActiveFilters && (
-                  <Button size="small" onClick={clearFilters}>
-                    清空筛选
-                  </Button>
-                )}
-              </Space>
-            }
-            style={{ height: '100%' }}
-          >
-            <div style={{ overflow: 'auto', maxHeight: 600 }}>
+  const viewModeSelectValue: 'grid' | 'list' = derived.viewMode === 'list' ? 'list' : 'grid'
+
+  const resultsCardExtra = (
+    <Space size={4} wrap style={{ justifyContent: 'flex-end' }}>
+      {effectiveViewMode === 'list' ? (
+        <Select
+          size="small"
+          value={listPageSize}
+          onChange={setListPageSize}
+          options={[
+            { label: '10 条/页', value: 10 },
+            { label: '20 条/页', value: 20 },
+            { label: '50 条/页', value: 50 },
+          ]}
+          style={{ width: 100 }}
+        />
+      ) : null}
+      <Select
+        size="small"
+        value={viewModeSelectValue}
+        onChange={(v) => setUi({ viewMode: v })}
+        options={[
+          { value: 'grid', label: '缩略图' },
+          { value: 'list', label: '列表' },
+        ]}
+        style={{ width: 88 }}
+      />
+    </Space>
+  )
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 500 }}>
+      <Card
+        size="small"
+        title={filterCardTitle}
+        extra={filterCardExtra}
+        style={{ marginBottom: 8 }}
+        styles={{
+          body: {
+            paddingBlock: filterPanelExpanded ? 6 : 0,
+            paddingInline: 12,
+          },
+          header: {
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            rowGap: 4,
+            minHeight: 36,
+            paddingBlock: 6,
+          },
+        }}
+      >
+        {filterPanelExpanded ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      alignItems: 'center',
+                      gap: '4px 6px',
+                    }}
+                  >
+                    <Typography.Text type="secondary" style={FILTER_LABEL}>
+                      格式
+                    </Typography.Text>
+                    {derived.filterOptions.formats.map((o: { id: string; label: string; count: number }) => (
+                      <Tag
+                        key={o.id}
+                        style={FILTER_TAG}
+                        color={(derived.activeFilters ?? {}).formats?.includes(o.id) ? 'blue' : 'default'}
+                        onClick={() => {
+                          const cur = (derived.activeFilters ?? {}).formats ?? []
+                          const next = cur.includes(o.id) ? cur.filter((x: string) => x !== o.id) : [...cur, o.id]
+                          setFilters({ formats: next })
+                        }}
+                      >
+                        {o.label}（{o.count}）
+                      </Tag>
+                    ))}
+                    <Typography.Text type="secondary" style={{ ...FILTER_LABEL, marginLeft: 6 }}>
+                      大小
+                    </Typography.Text>
+                    {derived.filterOptions.sizes.map((o: { id: string; label: string; count: number }) => (
+                      <Tag
+                        key={o.id}
+                        style={FILTER_TAG}
+                        color={(derived.activeFilters ?? {}).sizes?.includes(o.id) ? 'blue' : 'default'}
+                        onClick={() => {
+                          const cur = (derived.activeFilters ?? {}).sizes ?? []
+                          const next = cur.includes(o.id) ? cur.filter((x: string) => x !== o.id) : [...cur, o.id]
+                          setFilters({ sizes: next })
+                        }}
+                      >
+                        {o.label}（{o.count}）
+                      </Tag>
+                    ))}
+                    <Typography.Text type="secondary" style={{ ...FILTER_LABEL, marginLeft: 6 }}>
+                      方向
+                    </Typography.Text>
+                    {derived.filterOptions.orient.map((o: { id: string; label: string; count: number }) => (
+                      <Tag
+                        key={o.id}
+                        style={FILTER_TAG}
+                        color={(derived.activeFilters ?? {}).orient?.includes(o.id) ? 'blue' : 'default'}
+                        onClick={() => {
+                          const cur = (derived.activeFilters ?? {}).orient ?? []
+                          const next = cur.includes(o.id) ? cur.filter((x: string) => x !== o.id) : [...cur, o.id]
+                          setFilters({ orient: next })
+                        }}
+                      >
+                        {o.label}（{o.count}）
+                      </Tag>
+                    ))}
+                    <Typography.Text type="secondary" style={{ ...FILTER_LABEL, marginLeft: 6 }}>
+                      文件时间
+                    </Typography.Text>
+                    <Typography.Text type="secondary" style={{ ...FILTER_LABEL, opacity: 0.85 }}>
+                      （修改时间）
+                    </Typography.Text>
+                    <DatePicker.RangePicker
+                      size="small"
+                      allowClear
+                      style={{ minWidth: 200 }}
+                      value={fileTimeRangePickerValue}
+                      onChange={(dates) => {
+                        if (!dates?.[0] || !dates[1]) {
+                          setFilters({ fileTimeRange: undefined })
+                          return
+                        }
+                        setFilters({
+                          fileTimeRange: {
+                            startMs: dates[0].startOf('day').valueOf(),
+                            endMs: dates[1].endOf('day').valueOf(),
+                          },
+                        })
+                      }}
+                    />
+                    {derived.hasActiveFilters && (
+                      <Button
+                        size="small"
+                        type="link"
+                        onClick={clearFilters}
+                        style={{ marginLeft: 4, padding: '0 4px', fontSize: 12, height: 22 }}
+                      >
+                        清空筛选
+                      </Button>
+                    )}
+                  </div>
+                  <div>
+                    <Space size={4} wrap style={{ marginBottom: 4 }}>
+                      <Typography.Text type="secondary" style={FILTER_LABEL}>
+                        自定义标签
+                      </Typography.Text>
+                      {activeTagFilterCount > 0 ? (
+                        <Tag color="processing" style={{ ...FILTER_TAG, cursor: 'default' }}>
+                          已选 {activeTagFilterCount}
+                        </Tag>
+                      ) : null}
+                    </Space>
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        alignItems: 'center',
+                        gap: '4px 6px',
+                      }}
+                    >
+                      {derived.filterOptions.tags.length === 0 ? (
+                        <Typography.Text type="secondary" style={{ ...FILTER_LABEL, opacity: 0.85 }}>
+                          暂无可用标签，导入图片并添加自定义标签后将显示于此
+                        </Typography.Text>
+                      ) : (
+                        derived.filterOptions.tags.slice(0, 40).map((o: { name: string; count: number }) => (
+                          <Tag
+                            key={o.name}
+                            style={FILTER_TAG}
+                            color={(derived.activeFilters ?? {}).tags?.includes(o.name) ? 'blue' : 'default'}
+                            onClick={() => {
+                              const cur = (derived.activeFilters ?? {}).tags ?? []
+                              const next = cur.includes(o.name)
+                                ? cur.filter((x: string) => x !== o.name)
+                                : [...cur, o.name]
+                              setFilters({ tags: next })
+                            }}
+                          >
+                            {o.name}（{o.count}）
+                          </Tag>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
+                    <Typography.Text type="secondary" style={FILTER_LABEL}>
+                      排序
+                    </Typography.Text>
+                    {derived.sortRules.map((r: { id: string; label: string }, i: number) => (
+                      <Space key={r.id} size={2} style={{ flexShrink: 0 }}>
+                        <Tag color="processing" style={{ ...FILTER_TAG, cursor: 'default' }}>
+                          {r.label}
+                        </Tag>
+                        <Button
+                          size="small"
+                          type="text"
+                          disabled={i === 0}
+                          onClick={() => {
+                            const ids = derived.sortRules.map((x: { id: string }) => x.id)
+                            ;[ids[i - 1], ids[i]] = [ids[i]!, ids[i - 1]!]
+                            setSortRules(ids)
+                          }}
+                        >
+                          ↑
+                        </Button>
+                        <Button
+                          size="small"
+                          type="text"
+                          disabled={i === derived.sortRules.length - 1}
+                          onClick={() => {
+                            const ids = derived.sortRules.map((x: { id: string }) => x.id)
+                            ;[ids[i], ids[i + 1]] = [ids[i + 1]!, ids[i]!]
+                            setSortRules(ids)
+                          }}
+                        >
+                          ↓
+                        </Button>
+                        <Button
+                          size="small"
+                          type="text"
+                          danger
+                          onClick={() => {
+                            const next = derived.sortRules
+                              .map((x: { id: string }) => x.id)
+                              .filter((_: string, j: number) => j !== i)
+                            setSortRules(next.length ? next : ['importedAtDesc'])
+                          }}
+                        >
+                          ×
+                        </Button>
+                      </Space>
+                    ))}
+                    <Select
+                      size="small"
+                      placeholder="添加排序规则"
+                      style={{ width: 168, minWidth: 140 }}
+                      allowClear
+                      options={[
+                        { id: 'importedAtDesc', label: '导入时间（新→旧）' },
+                        { id: 'importedAtAsc', label: '导入时间（旧→新）' },
+                        { id: 'sizeDesc', label: '文件大小（大→小）' },
+                        { id: 'sizeAsc', label: '文件大小（小→大）' },
+                        { id: 'nameAsc', label: '文件名（A→Z）' },
+                        { id: 'nameDesc', label: '文件名（Z→A）' },
+                        { id: 'extAsc', label: '扩展名（A→Z）' },
+                      ]
+                        .filter(
+                          (o: { id: string; label: string }) =>
+                            !derived.sortRules.some((r: { id: string }) => r.id === o.id)
+                        )
+                        .map((o) => ({ value: o.id, label: o.label }))}
+                      onChange={(v) => {
+                        if (v) setSortRules([...derived.sortRules.map((x) => x.id), v])
+                      }}
+                    />
+                  </div>
+          </div>
+        ) : null}
+      </Card>
+
+      <Card
+        size="small"
+        title={`${listFiltered.length} 张`}
+        extra={resultsCardExtra}
+        style={{ flex: 1, minHeight: 0 }}
+        styles={{
+          header: {
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            rowGap: 4,
+            minHeight: 36,
+            paddingBlock: 6,
+          },
+        }}
+      >
+            <div style={{ overflow: 'auto', maxHeight: 'calc(100vh - 168px)', minHeight: 280 }}>
               {derived.results.length === 0 ? (
                 <Empty description="暂无图片" />
+              ) : listFiltered.length === 0 ? (
+                <Empty description="无匹配结果" />
               ) : effectiveViewMode === 'list' ? (
                 <List
                   size="small"
-                  dataSource={derived.results}
+                  dataSource={listFiltered}
+                  pagination={{
+                    current: listPage,
+                    pageSize: listPageSize,
+                    total: listFiltered.length,
+                    showSizeChanger: false,
+                    showTotal: (t) => `共 ${t} 条`,
+                    onChange: (p) => setListPage(p),
+                  }}
                   renderItem={(img: (typeof derived.results)[0]) => (
                     <List.Item
                       onMouseEnter={() => {
@@ -292,20 +802,27 @@ export default function PhotoManagementPage() {
                       onMouseLeave={() => setHoverPreview(null)}
                     >
                       <List.Item.Meta
-                        avatar={<ThumbImage img={img} size={48} loadThumb={loadThumb} />}
-                        title={img.displayName ?? img.originalName}
+                        avatar={
+                          <ThumbImage
+                            img={img}
+                            size={48}
+                            loadThumb={loadThumb}
+                            onOpen={() => void openLargePreview(img)}
+                          />
+                        }
+                        title={<PhotoTitleRow img={img} />}
                         description={
-                          <Space>
-                            <span>{img.ext?.toUpperCase() ?? '?'}</span>
-                            <span>{formatBytes(img.sizeBytes)}</span>
-                            <span>
-                              {img.width ?? 0}×{img.height ?? 0}
-                            </span>
-                            {(img.autoTags ?? []).concat(img.userTags ?? []).slice(0, 3).map((t: string) => (
-                              <Tag key={t} closable onClose={() => removeUserTag(img.id, t)}>
+                          <Space wrap size={[4, 4]} style={{ width: '100%' }}>
+                            {(img.userTags ?? []).map((t: string) => (
+                              <Tag key={t} color="blue">
                                 {t}
                               </Tag>
                             ))}
+                            <TagInput
+                              imageId={img.id}
+                              onAdd={addUserTag}
+                              onSuggest={getTagSuggestions}
+                            />
                           </Space>
                         }
                       />
@@ -314,40 +831,30 @@ export default function PhotoManagementPage() {
                 />
               ) : (
                 <Row gutter={[12, 12]}>
-                  {derived.results.map((img: (typeof derived.results)[0]) => (
+                  {listFiltered.map((img: (typeof derived.results)[0]) => (
                     <Col key={img.id} xs={12} sm={8} md={6} lg={6}>
                       <Card
                         size="small"
                         hoverable
-                        cover={<ThumbImage img={img} size={160} loadThumb={loadThumb} />}
+                        cover={
+                          <ThumbImage
+                            img={img}
+                            size={160}
+                            loadThumb={loadThumb}
+                            onOpen={() => void openLargePreview(img)}
+                          />
+                        }
                         actions={[]}
                       >
                         <Card.Meta
-                          title={
-                            <Typography.Text style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>
-                              {img.displayName ?? img.originalName}
-                            </Typography.Text>
-                          }
+                          title={<PhotoTitleRow img={img} />}
                           description={
-                            <Space orientation="vertical" size={0}>
-                              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                                {img.ext?.toUpperCase()} · {formatBytes(img.sizeBytes)}
-                              </Typography.Text>
-                              <Space wrap size={[4, 4]}>
-                                {(img.autoTags ?? []).map((t: string) => (
-                                  <Tag key={t}>{t}</Tag>
-                                ))}
-                                {(img.userTags ?? []).map((t: string) => (
-                                  <Tag
-                                    key={t}
-                                    color="blue"
-                                    closable
-                                    onClose={() => removeUserTag(img.id, t)}
-                                  >
-                                    {t}
-                                  </Tag>
-                                ))}
-                              </Space>
+                            <Space wrap size={[4, 4]} style={{ width: '100%', position: 'relative' }}>
+                              {(img.userTags ?? []).map((t: string) => (
+                                <Tag key={t} color="blue">
+                                  {t}
+                                </Tag>
+                              ))}
                               <TagInput
                                 imageId={img.id}
                                 onAdd={addUserTag}
@@ -363,266 +870,127 @@ export default function PhotoManagementPage() {
               )}
             </div>
           </Card>
-        </Col>
 
-        <Col xs={24} lg={8}>
-          <Card size="small" title="筛选 & 排序" style={{ marginBottom: 16 }}>
-            <Space orientation="vertical" style={{ width: '100%' }} size="small">
-              <div>
-                <Typography.Text type="secondary">格式</Typography.Text>
-                <div style={{ marginTop: 4 }}>
-                  {derived.filterOptions.formats.map((o: { id: string; label: string; count: number }) => (
-                    <Tag
-                      key={o.id}
-                      style={{ marginBottom: 4, cursor: 'pointer' }}
-                      color={
-                        (derived.activeFilters ?? {}).formats?.includes(o.id) ? 'blue' : 'default'
-                      }
-                      onClick={() => {
-                          const cur = (derived.activeFilters ?? {}).formats ?? []
-                        const next = cur.includes(o.id)
-                          ? cur.filter((x: string) => x !== o.id)
-                          : [...cur, o.id]
-                        setFilters({ formats: next })
-                      }}
-                    >
-                      {o.label} ({o.count})
-                    </Tag>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <Typography.Text type="secondary">大小</Typography.Text>
-                <div style={{ marginTop: 4 }}>
-                  {derived.filterOptions.sizes.map((o: { id: string; label: string; count: number }) => (
-                    <Tag
-                      key={o.id}
-                      style={{ marginBottom: 4, cursor: 'pointer' }}
-                      color={
-                        (derived.activeFilters ?? {}).sizes?.includes(o.id) ? 'blue' : 'default'
-                      }
-                      onClick={() => {
-                          const cur = (derived.activeFilters ?? {}).sizes ?? []
-                        const next = cur.includes(o.id)
-                          ? cur.filter((x: string) => x !== o.id)
-                          : [...cur, o.id]
-                        setFilters({ sizes: next })
-                      }}
-                    >
-                      {o.label} ({o.count})
-                    </Tag>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <Typography.Text type="secondary">方向</Typography.Text>
-                <div style={{ marginTop: 4 }}>
-                  {derived.filterOptions.orient.map((o: { id: string; label: string; count: number }) => (
-                    <Tag
-                      key={o.id}
-                      style={{ marginBottom: 4, cursor: 'pointer' }}
-                      color={
-                        (derived.activeFilters ?? {}).orient?.includes(o.id) ? 'blue' : 'default'
-                      }
-                      onClick={() => {
-                          const cur = (derived.activeFilters ?? {}).orient ?? []
-                        const next = cur.includes(o.id)
-                          ? cur.filter((x: string) => x !== o.id)
-                          : [...cur, o.id]
-                        setFilters({ orient: next })
-                      }}
-                    >
-                      {o.label} ({o.count})
-                    </Tag>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <Typography.Text type="secondary">标签</Typography.Text>
-                <div style={{ marginTop: 4 }}>
-                  {derived.filterOptions.tags.slice(0, 20).map((o: { name: string; count: number }) => (
-                    <Tag
-                      key={o.name}
-                      style={{ marginBottom: 4, cursor: 'pointer' }}
-                      color={
-                        (derived.activeFilters ?? {}).tags?.includes(o.name) ? 'blue' : 'default'
-                      }
-                      onClick={() => {
-                          const cur = (derived.activeFilters ?? {}).tags ?? []
-                        const next = cur.includes(o.name)
-                          ? cur.filter((x: string) => x !== o.name)
-                          : [...cur, o.name]
-                        setFilters({ tags: next })
-                      }}
-                    >
-                      {o.name} ({o.count})
-                    </Tag>
-                  ))}
-                </div>
-              </div>
-            </Space>
-          </Card>
-
-          <Card size="small" title="排序规则">
-            <Space orientation="vertical" style={{ width: '100%' }} size="small">
-              {derived.sortRules.map((r: { id: string; label: string }, i: number) => (
-                <div
-                  key={r.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                  }}
-                >
-                  <span>{r.label}</span>
-                  <Space>
-                    <Button
-                      size="small"
-                      disabled={i === 0}
-                      onClick={() => {
-                        const ids = derived.sortRules.map((x: { id: string }) => x.id)
-                        ;[ids[i - 1], ids[i]] = [ids[i]!, ids[i - 1]!]
-                        setSortRules(ids)
-                      }}
-                    >
-                      ↑
-                    </Button>
-                    <Button
-                      size="small"
-                      disabled={i === derived.sortRules.length - 1}
-                      onClick={() => {
-                        const ids = derived.sortRules.map((x: { id: string }) => x.id)
-                        ;[ids[i], ids[i + 1]] = [ids[i + 1]!, ids[i]!]
-                        setSortRules(ids)
-                      }}
-                    >
-                      ↓
-                    </Button>
-                    <Button
-                      size="small"
-                      danger
-                      onClick={() => {
-                        const next = derived.sortRules
-                          .map((x: { id: string }) => x.id)
-                          .filter((_: string, j: number) => j !== i)
-                        setSortRules(next.length ? next : ['importedAtDesc'])
-                      }}
-                    >
-                      ×
-                    </Button>
-                  </Space>
-                </div>
-              ))}
-              <Select
-                placeholder="添加排序规则"
-                style={{ width: '100%' }}
-                allowClear
-                options={[
-                  { id: 'importedAtDesc', label: '导入时间（新→旧）' },
-                  { id: 'importedAtAsc', label: '导入时间（旧→新）' },
-                  { id: 'sizeDesc', label: '文件大小（大→小）' },
-                  { id: 'sizeAsc', label: '文件大小（小→大）' },
-                  { id: 'nameAsc', label: '文件名（A→Z）' },
-                  { id: 'nameDesc', label: '文件名（Z→A）' },
-                  { id: 'extAsc', label: '格式（A→Z）' },
-                ]
-                  .filter(
-                    (o: { id: string; label: string }) =>
-                      !derived.sortRules.some((r: { id: string }) => r.id === o.id)
-                  )
-                  .map((o) => ({ value: o.id, label: o.label }))}
-                onChange={(v) => {
-                  if (v) setSortRules([...derived.sortRules.map((x) => x.id), v])
-                }}
-              />
-            </Space>
-          </Card>
-
-          <Card size="small" title="日志" style={{ marginTop: 16 }}>
-            <pre
-              style={{
-                maxHeight: 120,
-                overflow: 'auto',
-                fontSize: 11,
-                margin: 0,
-              }}
-            >
-              {logLines.length ? logLines.join('\n') : '—'}
-            </pre>
-          </Card>
-        </Col>
-      </Row>
-
-      {/* Import Modal */}
-      {importOpen && (
-        <Card
-          title="导入图片"
-          extra={
-            <Button onClick={() => setImportOpen(false)}>关闭</Button>
-          }
-          style={{
-            position: 'fixed',
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            zIndex: 1000,
-            width: '90%',
-            maxWidth: 700,
-            maxHeight: '80vh',
-            overflow: 'auto',
-          }}
-        >
-          <Space orientation="vertical" style={{ width: '100%' }}>
-            <Space>
-              <Button icon={<InboxOutlined />} onClick={handlePickFiles}>
-                选择图片文件
-              </Button>
-              <Button onClick={handlePickFolder}>选择文件夹</Button>
-              <Button
-                type="primary"
-                loading={importing}
-                disabled={!importFilesList.length}
-                onClick={handleStartImport}
-              >
-                开始导入 ({importFilesList.length})
-              </Button>
-            </Space>
-            <Typography.Text type="secondary">
-              {importFilesList.length
-                ? `已选 ${importFilesList.length} 个文件`
-                : '尚未选择文件'}
-            </Typography.Text>
+      <Modal
+        open={!!largePreview}
+        title={largePreviewImage ? (largePreviewImage.displayName ?? largePreviewImage.originalName) : '预览'}
+        onCancel={closeLargePreview}
+        footer={
+          <Button type="primary" onClick={closeLargePreview}>
+            关闭
+          </Button>
+        }
+        width={Math.min(920, typeof window !== 'undefined' ? window.innerWidth - 32 : 920)}
+        destroyOnHidden
+        centered
+      >
+        {largePreview && largePreviewImage ? (
+          <Space orientation="vertical" style={{ width: '100%' }} size="middle">
             <div
               style={{
-                maxHeight: 300,
-                overflow: 'auto',
-                border: '1px solid #d9d9d9',
+                textAlign: 'center',
+                background: 'rgba(0,0,0,0.04)',
                 borderRadius: 8,
                 padding: 8,
               }}
             >
-              {importFilesList.length === 0 ? (
-                <Empty description="选择文件或文件夹以预览" />
-              ) : (
-                <List
-                  size="small"
-                  dataSource={importFilesList.slice(0, 100)}
-                  renderItem={(f: File) => (
-                    <List.Item>
-                      {f.name} — {formatBytes(f.size)}
-                    </List.Item>
-                  )}
+              <img
+                src={largePreview.url}
+                alt=""
+                style={{
+                  maxWidth: '100%',
+                  maxHeight: 'min(70vh, 720px)',
+                  objectFit: 'contain',
+                  display: 'block',
+                  margin: '0 auto',
+                }}
+              />
+            </div>
+            <PhotoTitleRow img={largePreviewImage} />
+            <div>
+              <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+                删除自定义标签请在本窗口内操作
+              </Typography.Text>
+              <Space wrap size={[4, 8]}>
+                {(largePreviewImage.userTags ?? []).map((t: string) => (
+                  <Tag key={t} color="blue" closable onClose={() => removeUserTag(largePreviewImage.id, t)}>
+                    {t}
+                  </Tag>
+                ))}
+                <TagInput
+                  imageId={largePreviewImage.id}
+                  onAdd={addUserTag}
+                  onSuggest={getTagSuggestions}
                 />
-              )}
-              {importFilesList.length > 100 && (
-                <Typography.Text type="secondary">
-                  共 {importFilesList.length} 个，仅预览前 100 个
-                </Typography.Text>
-              )}
+              </Space>
             </div>
           </Space>
-        </Card>
-      )}
+        ) : largePreview ? (
+          <Typography.Text type="secondary">图片已不在当前索引中</Typography.Text>
+        ) : null}
+      </Modal>
+
+      <Modal
+        open={importOpen}
+        title="导入图片"
+        width={700}
+        onCancel={() => setImportOpen(false)}
+        footer={
+          <Button onClick={() => setImportOpen(false)}>关闭</Button>
+        }
+        destroyOnHidden
+        centered
+      >
+        <Space orientation="vertical" style={{ width: '100%' }}>
+          <Space wrap>
+            <Button icon={<InboxOutlined />} onClick={handlePickFiles}>
+              选择图片文件
+            </Button>
+            <Button onClick={handlePickFolder}>选择文件夹</Button>
+            <Button
+              type="primary"
+              loading={importing}
+              disabled={!importFilesList.length}
+              onClick={handleStartImport}
+            >
+              开始导入 ({importFilesList.length})
+            </Button>
+          </Space>
+          <Typography.Text type="secondary">
+            {importFilesList.length
+              ? `已选 ${importFilesList.length} 个文件`
+              : '尚未选择文件'}
+          </Typography.Text>
+          <div
+            style={{
+              maxHeight: 300,
+              overflow: 'auto',
+              border: '1px solid #d9d9d9',
+              borderRadius: 8,
+              padding: 8,
+            }}
+          >
+            {importFilesList.length === 0 ? (
+              <Empty description="选择文件或文件夹以预览" />
+            ) : (
+              <List
+                size="small"
+                dataSource={importFilesList.slice(0, 100)}
+                renderItem={(f: File) => (
+                  <List.Item>
+                    {f.name} — {formatBytes(f.size)}
+                  </List.Item>
+                )}
+              />
+            )}
+            {importFilesList.length > 100 && (
+              <Typography.Text type="secondary">
+                共 {importFilesList.length} 个，仅预览前 100 个
+              </Typography.Text>
+            )}
+          </div>
+        </Space>
+      </Modal>
 
       {hoverPreview && (
         <Popover
@@ -676,7 +1044,7 @@ function TagInput({
   }, [value, onSuggest])
 
   return (
-    <div style={{ marginTop: 4 }}>
+    <div style={{ marginTop: 0, position: 'relative', display: 'inline-block', minWidth: 120, verticalAlign: 'middle' }}>
       <Input
         size="small"
         placeholder="# 输入标签，回车添加"

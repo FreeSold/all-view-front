@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useGlobalLog } from '../../context/GlobalLogContext'
 import { migrateToDataDir } from '../../storage/appStore'
 import { PhotoFsRepo, isFileSystemAccessSupported } from '../../storage/photoFsRepo'
 import { buildDerived } from '../../storage/photoDerived'
@@ -17,9 +18,9 @@ const DEFAULT_INDEX: PhotoIndex = {
   version: 1,
   images: [],
   ui: {
-    viewMode: 'auto',
+    viewMode: 'grid',
     activeFolderId: 'all',
-    filters: { formats: [], sizes: [], orient: [], tags: [] },
+    filters: { formats: [], sizes: [], orient: [], tags: [], fileTimeRange: undefined },
     sortRules: ['importedAtDesc'],
   },
 }
@@ -57,6 +58,7 @@ function normalizeTags(tags: PhotoTags | null): PhotoTags {
 }
 
 export function usePhotoState() {
+  const { append: appendGlobalLog, lines: logLines } = useGlobalLog()
   const repo = useRef(new PhotoFsRepo()).current
   const [fs, setFs] = useState<{ rootHandle: FileSystemDirectoryHandle | null; rootName: string }>({
     rootHandle: null,
@@ -64,14 +66,68 @@ export function usePhotoState() {
   })
   const [index, setIndex] = useState<PhotoIndex>(DEFAULT_INDEX)
   const [tags, setTags] = useState<PhotoTags>(DEFAULT_TAGS)
-  const [logLines, setLogLines] = useState<string[]>([])
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const indexRef = useRef(index)
+  const tagsRef = useRef(tags)
+  const fsRef = useRef(fs)
+
+  useEffect(() => {
+    indexRef.current = index
+  }, [index])
+  useEffect(() => {
+    tagsRef.current = tags
+  }, [tags])
+  useEffect(() => {
+    fsRef.current = fs
+  }, [fs])
 
   const derived = buildDerived({ index, tags })
 
-  const log = useCallback((msg: string) => {
-    setLogLines((prev) => [...prev.slice(-99), `[${new Date().toLocaleTimeString()}] ${msg}`])
-  }, [])
+  const log = useCallback(
+    (msg: string) => {
+      appendGlobalLog(msg)
+    },
+    [appendGlobalLog]
+  )
+
+  const persistSoon = useCallback(() => {
+    if (persistTimer.current) clearTimeout(persistTimer.current)
+    persistTimer.current = setTimeout(async () => {
+      const root = fsRef.current.rootHandle
+      if (!root) return
+      const idx = indexRef.current
+      const tgs = tagsRef.current
+      try {
+        await repo.saveIndex(idx)
+        await repo.saveTags(tgs)
+      } catch (e) {
+        log(`保存失败：${String(e)}`)
+      }
+      persistTimer.current = null
+    }, 250)
+  }, [repo, log])
+
+  const applyLoadedIndexAndTags = useCallback(
+    async (loadedIndex: PhotoIndex | null, loadedTags: PhotoTags | null) => {
+      let nextIndex = normalizeIndex(loadedIndex)
+      const nextTags = normalizeTags(loadedTags)
+      if (nextIndex.images.length === 0) {
+        const rebuilt = await repo.rebuildIndexFromLibraryFiles()
+        if (rebuilt.length > 0) {
+          nextIndex = {
+            ...nextIndex,
+            version: nextIndex.version ?? 1,
+            images: rebuilt,
+          }
+          log(`已从 library 目录识别 ${rebuilt.length} 张图片（原 index.json 为空或缺失）`)
+        }
+      }
+      setIndex(nextIndex)
+      setTags(nextTags)
+      persistSoon()
+    },
+    [repo, log, persistSoon]
+  )
 
   const loadAll = useCallback(async () => {
     const handle = await repo.tryRestoreRoot()
@@ -79,31 +135,16 @@ export function usePhotoState() {
       setFs({ rootHandle: handle, rootName: handle.name })
       try {
         const { index: loadedIndex, tags: loadedTags } = await repo.loadAll()
-        setIndex(normalizeIndex(loadedIndex))
-        setTags(normalizeTags(loadedTags))
+        await applyLoadedIndexAndTags(loadedIndex, loadedTags)
       } catch (e) {
-        log(`加载失败：${String(e)}`)
+        log(`加载失败：${String(e)}。若更换浏览器或未授权目录，请点击「选择数据目录」重新选择同一文件夹。`)
       }
     }
-  }, [repo, log])
+  }, [repo, log, applyLoadedIndexAndTags])
 
   useEffect(() => {
     loadAll()
   }, [loadAll])
-
-  const persistSoon = useCallback(() => {
-    if (persistTimer.current) clearTimeout(persistTimer.current)
-    persistTimer.current = setTimeout(async () => {
-      if (!fs.rootHandle) return
-      try {
-        await repo.saveIndex(index)
-        await repo.saveTags(tags)
-      } catch (e) {
-        log(`保存失败：${String(e)}`)
-      }
-      persistTimer.current = null
-    }, 250)
-  }, [fs.rootHandle, index, tags, repo, log])
 
   const pickRoot = useCallback(async () => {
     if (!isFileSystemAccessSupported()) {
@@ -116,13 +157,12 @@ export function usePhotoState() {
       await repo.ensureDirs()
       await migrateToDataDir()
       const { index: loadedIndex, tags: loadedTags } = await repo.loadAll()
-      setIndex(normalizeIndex(loadedIndex))
-      setTags(normalizeTags(loadedTags))
+      await applyLoadedIndexAndTags(loadedIndex, loadedTags)
       log('已选择数据目录')
     } catch (e) {
       log(`选择目录失败：${String(e)}`)
     }
-  }, [repo, log])
+  }, [repo, log, applyLoadedIndexAndTags])
 
   const setUi = useCallback(
     (patch: Partial<PhotoUi>) => {
@@ -155,7 +195,7 @@ export function usePhotoState() {
       ui: {
         ...prev.ui,
         activeFolderId: 'all',
-        filters: { formats: [], sizes: [], orient: [], tags: [] },
+        filters: { formats: [], sizes: [], orient: [], tags: [], fileTimeRange: undefined },
       },
     }))
     persistSoon()
@@ -305,11 +345,8 @@ export function usePhotoState() {
             thumbRelPath: thumbRel,
             hash,
             autoTags: computeAutoTags({
-              ext,
-              sizeBytes: file.size,
               width: dims.width,
               height: dims.height,
-              createdAt,
             }),
             userTags: [],
           }

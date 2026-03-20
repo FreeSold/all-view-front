@@ -74,10 +74,35 @@ export type Comic = {
   playHistory?: number[]
 }
 
+/** 视频/漫画列表页 UI 与筛选偏好（存 app-data.json，与作品数组分离便于复用） */
+export type MediaLibraryViewMode = 'grid' | 'list'
+
+export type MediaLibraryUiState = {
+  viewMode?: MediaLibraryViewMode
+  filterExpanded?: boolean
+  listPageSize?: number
+  /** 列表工具栏搜索 */
+  searchKeyword?: string
+  searchField?: 'name' | 'id' | 'actors' | 'category' | 'tags'
+  /** 面板内：精确分类多选（作品 category 需命中其一） */
+  categoryFilters?: string[]
+  /** 面板内：标签多选（作品需包含全部所选标签） */
+  tagFilters?: string[]
+  /** 创建时间闭区间（ms） */
+  createdRange?: { startMs: number; endMs: number }
+  sortBy?: 'createdAt' | 'name' | 'playCount'
+  sortOrder?: 'asc' | 'desc'
+}
+
 export type AppData = {
   roles: Role[]
   accounts: Account[]
   videos: Video[]
   comics: Comic[]
   config: AppConfig
+  /** 各模块列表 UI，键与业务模块对应 */
+  mediaUi?: {
+    video?: MediaLibraryUiState
+    comic?: MediaLibraryUiState
+  }
 }

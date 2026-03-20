@@ -11,6 +11,7 @@
 - **数据持久化**：
   - **桌面端（exe）**：数据保存在用户目录 JSON 文件（`%APPDATA%/All View/app-data.json`），清除网站数据、重启、重装均不影响
   - **浏览器**：使用 localStorage，支持导出备份 / 导入恢复，清除数据后可手动恢复
+- **作品库通用能力（视频 / 漫画）**：与图片管理一致的「筛选与排序」折叠面板、分类/标签/创建时间筛选、排序、列表搜索与分页；`app-data.json` 中 `mediaUi.video` / `mediaUi.comic` 存视图模式与筛选偏好（与 `videos` / `comics` 业务数组分离，结构见 `MediaLibraryUiState`）
 - **简约 Logo**：All View 品牌标识
 
 ## 启动

@@ -16,6 +16,7 @@
     "@ant-design/icons": "^6.1.0",
     "@types/react-resizable": "^3.0.8",
     "antd": "^6.3.3",
+    "dayjs": "^1.11.13",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-image-crop": "^11.0.10",

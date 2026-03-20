@@ -7,14 +7,44 @@ import {
   StarFilled,
   SwapOutlined,
 } from '@ant-design/icons'
-import { Button, Image, Input, Modal, Select, Space, Table, Tooltip, Typography, message } from 'antd'
+import {
+  Button,
+  Card,
+  Col,
+  DatePicker,
+  Empty,
+  Image,
+  Input,
+  Modal,
+  Row,
+  Select,
+  Space,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+  message,
+} from 'antd'
 import type { ColumnsType } from 'antd/es/table'
+import type { CSSProperties } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { Dayjs } from 'dayjs'
+import dayjs from 'dayjs'
 import { useSearchParams } from 'react-router-dom'
 import { Resizable } from 'react-resizable'
 import { theme } from 'antd'
 import { CoverCropModal } from '../components/CoverCropModal'
-import { DataDirButton } from '../components/DataDirButton'
+import { MediaAppToolbar } from '../components/MediaAppToolbar'
+import { MediaFilterSortCard, MediaResultsCard } from '../components/media/MediaLibraryChrome'
+import { useAppShell } from '../context/AppShellContext'
+import {
+  collectCategories,
+  collectTags,
+  filterMediaList,
+  mergeMediaUi,
+  sortMediaList,
+  type MediaListSearchField,
+} from '../media/mediaLibraryModel'
 import { getAppData, updateAppData } from '../storage/appStore'
 import {
   isFileSystemAccessSupported,
@@ -23,7 +53,20 @@ import {
   saveLocalVideoHandle,
   showVideoFilePicker,
 } from '../storage/localFileStore'
-import type { Comic, ComicSource } from '../storage/types'
+import type { Comic, ComicSource, MediaLibraryUiState, MediaLibraryViewMode } from '../storage/types'
+
+const FILTER_LABEL: CSSProperties = {
+  fontSize: 12,
+  lineHeight: '18px',
+  flexShrink: 0,
+}
+const FILTER_TAG: CSSProperties = {
+  fontSize: 11,
+  lineHeight: '18px',
+  marginInlineEnd: 0,
+  padding: '0 5px',
+  cursor: 'pointer',
+}
 
 function uid() {
   return `s_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`
@@ -313,19 +356,10 @@ function PillList({
 
 export function ComicManagementPage() {
   const { token } = theme.useToken()
+  const { setContentHeaderRight } = useAppShell()
   const { TextArea } = Input
   const [searchParams] = useSearchParams()
-  const [keyword, setKeyword] = useState('')
-  const [filterField, setFilterField] = useState<'name' | 'id' | 'actors' | 'category' | 'tags'>('name')
-
-  useEffect(() => {
-    const q = searchParams.get('q')
-    if (q) {
-      setKeyword(q)
-      setFilterField('name')
-    }
-  }, [searchParams])
-  const [pageSize, setPageSize] = useState(10)
+  const [uiTick, setUiTick] = useState(0)
   const [detailOpen, setDetailOpen] = useState(false)
   const [editingComic, setEditingComic] = useState<Comic | null>(null)
   const [sourceForm, setSourceForm] = useState<{ url: string; label: string }>({ url: '', label: '' })
@@ -338,6 +372,26 @@ export function ComicManagementPage() {
   const [detailMode, setDetailMode] = useState<'create' | 'edit'>('edit')
   const [originalId, setOriginalId] = useState<string | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
+
+  const comicUi = useMemo(
+    () => mergeMediaUi(getAppData().mediaUi?.comic),
+    [refreshKey, uiTick],
+  )
+
+  const patchComicUi = useCallback((patch: Partial<MediaLibraryUiState>) => {
+    updateAppData((d) => {
+      d.mediaUi = d.mediaUi ?? {}
+      d.mediaUi.comic = mergeMediaUi({ ...d.mediaUi.comic, ...patch })
+    })
+    setUiTick((t) => t + 1)
+  }, [])
+
+  useEffect(() => {
+    const q = searchParams.get('q')
+    if (q) {
+      patchComicUi({ searchKeyword: q, searchField: 'name' })
+    }
+  }, [searchParams, patchComicUi])
   const [colWidths, setColWidths] = useState({
     cover: 100,
     name: 180,
@@ -410,36 +464,63 @@ export function ComicManagementPage() {
   )
 
   const comics = useMemo(() => getAppData().comics, [refreshKey])
+  const categoryOptions = useMemo(() => collectCategories(comics), [comics])
+  const tagOptions = useMemo(() => collectTags(comics), [comics])
+
   const filtered = useMemo(() => {
-    const k = keyword.trim().toLowerCase()
-    if (!k) return comics
-    const tokens = k.split(/\s+/).filter(Boolean)
-    return comics.filter((v) => {
-      if (!tokens.length) return true
-      if (filterField === 'name') {
-        const name = v.name.toLowerCase()
-        return tokens.every((t) => name.includes(t))
-      }
-      if (filterField === 'id') {
-        const id = v.id.toLowerCase()
-        return tokens.every((t) => id.includes(t))
-      }
-      if (filterField === 'actors') {
-        const actorJoined = v.actorNames.join(' ').toLowerCase()
-        return tokens.every((t) => actorJoined.includes(t))
-      }
-      if (filterField === 'category') {
-        const cat = (v.category || '').toLowerCase()
-        return tokens.every((t) => cat.includes(t))
-      }
-      if (filterField === 'tags') {
-        const tags = (v.tags || []).map((x) => String(x).toLowerCase())
-        if (tags.length === 0) return false
-        return tokens.every((t) => tags.some((tag) => tag.includes(t)))
-      }
-      return true
+    const base = filterMediaList(comics, {
+      keyword: comicUi.searchKeyword ?? '',
+      searchField: (comicUi.searchField ?? 'name') as MediaListSearchField,
+      categoryFilters: comicUi.categoryFilters ?? [],
+      tagFilters: comicUi.tagFilters ?? [],
+      createdRange: comicUi.createdRange ?? null,
     })
-  }, [comics, keyword, filterField, refreshKey])
+    return sortMediaList(
+      base,
+      comicUi.sortBy ?? 'createdAt',
+      comicUi.sortOrder ?? 'desc',
+    )
+  }, [comics, comicUi])
+
+  const hasPanelFilters = Boolean(
+    (comicUi.categoryFilters ?? []).length ||
+      (comicUi.tagFilters ?? []).length ||
+      comicUi.createdRange != null,
+  )
+
+  const clearPanelFilters = useCallback(() => {
+    patchComicUi({
+      categoryFilters: [],
+      tagFilters: [],
+      createdRange: undefined,
+    })
+  }, [patchComicUi])
+
+  const toggleCategoryFilter = useCallback(
+    (cat: string) => {
+      const cur = new Set(comicUi.categoryFilters ?? [])
+      if (cur.has(cat)) cur.delete(cat)
+      else cur.add(cat)
+      patchComicUi({ categoryFilters: Array.from(cur) })
+    },
+    [patchComicUi, comicUi.categoryFilters],
+  )
+
+  const toggleTagFilter = useCallback(
+    (tag: string) => {
+      const cur = new Set(comicUi.tagFilters ?? [])
+      if (cur.has(tag)) cur.delete(tag)
+      else cur.add(tag)
+      patchComicUi({ tagFilters: Array.from(cur) })
+    },
+    [patchComicUi, comicUi.tagFilters],
+  )
+
+  const createdRangeValue = useMemo((): [Dayjs, Dayjs] | null => {
+    const r = comicUi.createdRange
+    if (r == null) return null
+    return [dayjs(r.startMs), dayjs(r.endMs)]
+  }, [comicUi.createdRange])
 
   const toFileUrl = useCallback((path: string): string => {
     const normalized = path.replace(/\\/g, '/')
@@ -532,6 +613,13 @@ export function ComicManagementPage() {
     setAddingSource(false)
     setSourceForm({ url: '', label: '' })
   }, [])
+
+  useLayoutEffect(() => {
+    setContentHeaderRight(() => (
+      <MediaAppToolbar addLabel="新增漫画" onAdd={handleCreate} />
+    ))
+    return () => setContentHeaderRight(null)
+  }, [setContentHeaderRight, handleCreate])
 
   const parseActors = useCallback((text: string): string[] => {
     return text
@@ -966,65 +1054,234 @@ export function ComicManagementPage() {
     },
   ]
 
-  return (
-    <div>
-      <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 16 }} wrap>
-        <Space wrap>
-          <Input
-            placeholder="搜索"
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-            style={{ width: 200 }}
-            allowClear
-          />
-          <Select
-            value={filterField}
-            onChange={setFilterField}
-            options={[
-              { label: '漫画名称', value: 'name' },
-              { label: '漫画ID', value: 'id' },
-              { label: '作者', value: 'actors' },
-              { label: '分类', value: 'category' },
-              { label: '标签', value: 'tags' },
-            ]}
-            style={{ width: 120 }}
-          />
-        </Space>
-        <Space>
-          <DataDirButton />
-          <Select
-            value={pageSize}
-            onChange={setPageSize}
-            options={[
-              { label: '10 条/页', value: 10 },
-              { label: '20 条/页', value: 20 },
-              { label: '50 条/页', value: 50 },
-            ]}
-            style={{ width: 120 }}
-          />
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-            新增漫画
-          </Button>
-        </Space>
-      </Space>
+  const viewMode = comicUi.viewMode === 'grid' ? 'grid' : 'list'
+  const pageSize = comicUi.listPageSize ?? 10
 
-      <Table
-        rowKey="id"
-        dataSource={filtered}
-        columns={columns}
-        tableLayout="fixed"
-        style={{ width: '100%' }}
-        components={{
-          header: {
-            cell: ResizeableTitle,
-          },
-        }}
-        pagination={{
-          pageSize,
-          showSizeChanger: false,
-          showTotal: (t) => `共 ${t} 条`,
-        }}
-      />
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 500 }}>
+      <MediaFilterSortCard
+        filterExpanded={comicUi.filterExpanded ?? false}
+        onFilterExpandedChange={(v) => patchComicUi({ filterExpanded: v })}
+        hasActiveFilters={hasPanelFilters}
+        extra={
+          <Space wrap size={[4, 4]} style={{ justifyContent: 'flex-end' }}>
+            <Input
+              size="small"
+              placeholder="搜索"
+              value={comicUi.searchKeyword ?? ''}
+              onChange={(e) => patchComicUi({ searchKeyword: e.target.value })}
+              style={{ width: 168 }}
+              allowClear
+            />
+            <Select<MediaListSearchField>
+              size="small"
+              value={(comicUi.searchField ?? 'name') as MediaListSearchField}
+              onChange={(v) => patchComicUi({ searchField: v })}
+              options={[
+                { label: '漫画名称', value: 'name' },
+                { label: '漫画ID', value: 'id' },
+                { label: '作者', value: 'actors' },
+                { label: '分类', value: 'category' },
+                { label: '标签', value: 'tags' },
+              ]}
+              style={{ width: 100 }}
+            />
+          </Space>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 6px' }}>
+            <Typography.Text type="secondary" style={FILTER_LABEL}>
+              分类
+            </Typography.Text>
+            {categoryOptions.map((c) => (
+              <Tag
+                key={c}
+                style={FILTER_TAG}
+                color={(comicUi.categoryFilters ?? []).includes(c) ? 'blue' : 'default'}
+                onClick={() => toggleCategoryFilter(c)}
+              >
+                {c}
+              </Tag>
+            ))}
+            <Typography.Text type="secondary" style={{ ...FILTER_LABEL, marginLeft: 6 }}>
+              标签
+            </Typography.Text>
+            {tagOptions.slice(0, 40).map((t) => (
+              <Tag
+                key={t}
+                style={FILTER_TAG}
+                color={(comicUi.tagFilters ?? []).includes(t) ? 'blue' : 'default'}
+                onClick={() => toggleTagFilter(t)}
+              >
+                {t}
+              </Tag>
+            ))}
+            <Typography.Text type="secondary" style={{ ...FILTER_LABEL, marginLeft: 6 }}>
+              创建时间
+            </Typography.Text>
+            <DatePicker.RangePicker
+              size="small"
+              allowClear
+              style={{ minWidth: 200 }}
+              value={createdRangeValue}
+              onChange={(dates) => {
+                if (!dates?.[0] || !dates[1]) {
+                  patchComicUi({ createdRange: undefined })
+                  return
+                }
+                patchComicUi({
+                  createdRange: {
+                    startMs: dates[0].startOf('day').valueOf(),
+                    endMs: dates[1].endOf('day').valueOf(),
+                  },
+                })
+              }}
+            />
+            <Typography.Text type="secondary" style={{ ...FILTER_LABEL, marginLeft: 6 }}>
+              排序
+            </Typography.Text>
+            <Select
+              size="small"
+              value={comicUi.sortBy ?? 'createdAt'}
+              onChange={(v) => patchComicUi({ sortBy: v })}
+              options={[
+                { value: 'createdAt', label: '创建时间' },
+                { value: 'name', label: '名称' },
+                { value: 'playCount', label: '阅读次数' },
+              ]}
+              style={{ width: 110 }}
+            />
+            <Select
+              size="small"
+              value={comicUi.sortOrder ?? 'desc'}
+              onChange={(v) => patchComicUi({ sortOrder: v })}
+              options={[
+                { value: 'asc', label: '升序' },
+                { value: 'desc', label: '降序' },
+              ]}
+              style={{ width: 88 }}
+            />
+            {hasPanelFilters && (
+              <Button
+                size="small"
+                type="link"
+                onClick={clearPanelFilters}
+                style={{ marginLeft: 4, padding: '0 4px', fontSize: 12, height: 22 }}
+              >
+                清空面板筛选
+              </Button>
+            )}
+          </div>
+        </div>
+      </MediaFilterSortCard>
+
+      <MediaResultsCard
+        title={`${filtered.length} 部`}
+        extra={
+          <Space wrap size={4} style={{ justifyContent: 'flex-end' }}>
+            {viewMode === 'list' ? (
+              <Select
+                size="small"
+                value={pageSize}
+                onChange={(n) => patchComicUi({ listPageSize: n })}
+                options={[
+                  { label: '10 条/页', value: 10 },
+                  { label: '20 条/页', value: 20 },
+                  { label: '50 条/页', value: 50 },
+                ]}
+                style={{ width: 100 }}
+              />
+            ) : null}
+            <Select
+              size="small"
+              value={viewMode}
+              onChange={(v) => patchComicUi({ viewMode: v as MediaLibraryViewMode })}
+              options={[
+                { value: 'grid', label: '缩略图' },
+                { value: 'list', label: '列表' },
+              ]}
+              style={{ width: 88 }}
+            />
+          </Space>
+        }
+      >
+        <div style={{ overflow: 'auto', maxHeight: 'calc(100vh - 168px)', minHeight: 280 }}>
+          {comics.length === 0 ? (
+            <Empty description="暂无漫画" />
+          ) : filtered.length === 0 ? (
+            <Empty description="无匹配结果" />
+          ) : viewMode === 'list' ? (
+            <Table
+              rowKey="id"
+              dataSource={filtered}
+              columns={columns}
+              tableLayout="fixed"
+              style={{ width: '100%' }}
+              components={{
+                header: {
+                  cell: ResizeableTitle,
+                },
+              }}
+              pagination={{
+                pageSize,
+                showSizeChanger: false,
+                showTotal: (t) => `共 ${t} 条`,
+              }}
+            />
+          ) : (
+            <Row gutter={[12, 12]}>
+              {filtered.map((v) => (
+                <Col key={v.id} xs={12} sm={8} md={6} lg={6}>
+                  <Card
+                    size="small"
+                    hoverable
+                    cover={
+                      <Image
+                        src={v.coverUrl}
+                        alt={v.name}
+                        style={{ height: 200, objectFit: 'cover' }}
+                        preview={{ mask: '放大' }}
+                      />
+                    }
+                  >
+                    <Card.Meta
+                      title={
+                        <Typography.Text ellipsis style={{ maxWidth: '100%' }}>
+                          {v.name}
+                        </Typography.Text>
+                      }
+                      description={
+                        <Space wrap size={4}>
+                          <Button
+                            type="text"
+                            size="small"
+                            icon={<EyeFilled style={{ fontSize: 16, color: primaryColor }} />}
+                            onClick={() => openDetail(v)}
+                          />
+                          <Button
+                            type="text"
+                            size="small"
+                            icon={<PlayCircleFilled style={{ fontSize: 16, color: primaryColor }} />}
+                            onClick={() => handlePlay(v)}
+                          />
+                          <Button
+                            type="text"
+                            size="small"
+                            danger
+                            icon={<DeleteFilled style={{ fontSize: 16 }} />}
+                            onClick={() => handleDelete(v)}
+                          />
+                        </Space>
+                      }
+                    />
+                  </Card>
+                </Col>
+              ))}
+            </Row>
+          )}
+        </div>
+      </MediaResultsCard>
 
       <Modal
         open={detailOpen}
@@ -1357,7 +1614,7 @@ export function ComicManagementPage() {
         title={playing ? `打开：${playing.name}` : ''}
         width={720}
         footer={null}
-        destroyOnClose
+        destroyOnHidden
         onCancel={() => setPlaying(null)}
       >
         {playing && (

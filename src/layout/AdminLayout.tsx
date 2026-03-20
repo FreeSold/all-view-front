@@ -1,4 +1,6 @@
 import { Breadcrumb, Button, Layout, Menu, Space, theme, Typography } from 'antd'
+import { useAppShell } from '../context/AppShellContext'
+import { useGlobalLog } from '../context/GlobalLogContext'
 import { CaretLeftFilled, CaretRightFilled } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
@@ -68,6 +70,8 @@ export function AdminLayout() {
   const { mode } = useThemeMode()
   const { user, logout } = useAuth()
   const photoFolder = usePhotoFolder()
+  const { lines: logLines, clear: clearLog } = useGlobalLog()
+  const { contentHeaderRight } = useAppShell()
 
   const [collapsed, setCollapsed] = useState(false)
   const isOnPhotos = location.pathname === '/app/photos'
@@ -133,11 +137,14 @@ export function AdminLayout() {
           background: token.colorBgContainer,
           borderRight: `1px solid ${token.colorBorderSecondary}`,
           position: 'relative',
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: '100vh',
         }}
         theme={mode === 'dark' ? 'dark' : 'light'}
       >
         <AdminLogo collapsed={collapsed} />
-        <div style={{ padding: 8 }}>
+        <div style={{ flex: 1, minHeight: 0, padding: 8, overflow: 'auto' }}>
           <Menu
             mode="inline"
             theme={mode === 'dark' ? 'dark' : 'light'}
@@ -156,6 +163,51 @@ export function AdminLayout() {
             }}
           />
         </div>
+        {!collapsed && (
+          <div
+            style={{
+              flexShrink: 0,
+              borderTop: `1px solid ${token.colorBorderSecondary}`,
+              padding: 8,
+              maxHeight: 200,
+              display: 'flex',
+              flexDirection: 'column',
+              background: token.colorBgLayout,
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 6,
+              }}
+            >
+              <Typography.Text strong style={{ fontSize: 12 }}>
+                日志
+              </Typography.Text>
+              <Button type="link" size="small" onClick={clearLog} disabled={!logLines.length}>
+                清空
+              </Button>
+            </div>
+            <pre
+              style={{
+                margin: 0,
+                fontSize: 10,
+                lineHeight: 1.35,
+                overflow: 'auto',
+                flex: 1,
+                minHeight: 0,
+                maxHeight: 140,
+                color: token.colorTextSecondary,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+              }}
+            >
+              {logLines.length ? logLines.join('\n') : '—'}
+            </pre>
+          </div>
+        )}
         <div
           onClick={() => setCollapsed((c) => !c)}
           style={{
@@ -214,7 +266,21 @@ export function AdminLayout() {
         </Header>
 
         <Content style={{ padding: 16 }}>
-          <Breadcrumb items={breadcrumbItems} style={{ marginBottom: 12 }} />
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              marginBottom: 12,
+            }}
+          >
+            <Breadcrumb items={breadcrumbItems} style={{ margin: 0 }} />
+            <div style={{ flex: '1 1 auto', display: 'flex', justifyContent: 'flex-end', minWidth: 0 }}>
+              {typeof contentHeaderRight === 'function' ? contentHeaderRight() : null}
+            </div>
+          </div>
           <div
             style={{
               background: token.colorBgContainer,

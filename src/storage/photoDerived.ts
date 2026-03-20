@@ -1,4 +1,10 @@
 import { sizeBucket, SIZE_LABELS } from '../util/photoTags'
+
+const ORIENT_LABELS: Record<string, string> = {
+  landscape: '横图',
+  portrait: '竖图',
+  unknown: '方向未知',
+}
 import { applySortRules, SORT_RULE_OPTIONS } from '../util/photoSort'
 import { fileNameFromRel } from '../util/photoPath'
 import type { PhotoIndex, PhotoImage, PhotoUi, FolderTreeNode, FilterOptions } from './photoTypes'
@@ -74,6 +80,7 @@ export function buildDerived(state: {
     sizes: [],
     orient: [],
     tags: [],
+    fileTimeRange: undefined,
   }
   const activeSortRules = ui.sortRules ?? ['importedAtDesc']
 
@@ -84,7 +91,7 @@ export function buildDerived(state: {
   const filtered2 = applyFilters(filtered, activeFilters)
   const sorted = applySortRules(filtered2, activeSortRules) as PhotoImage[]
 
-  const viewMode = ui.viewMode ?? 'auto'
+  const viewMode = ui.viewMode ?? 'grid'
 
   const results: (PhotoImage & { displayName: string; sizeBucket: string })[] = sorted.map(
     (img) => ({
@@ -99,6 +106,7 @@ export function buildDerived(state: {
       (activeFilters.sizes ?? []).length ||
       (activeFilters.orient ?? []).length ||
       (activeFilters.tags ?? []).length ||
+      activeFilters.fileTimeRange != null ||
       activeFolderId !== 'all'
   )
 
@@ -129,7 +137,7 @@ function computeFilterOptions(images: PhotoImage[]): FilterOptions {
     sizes.set(sb, (sizes.get(sb) ?? 0) + 1)
     const o = String(img.orientation ?? 'unknown')
     orient.set(o, (orient.get(o) ?? 0) + 1)
-    for (const t of [...(img.autoTags ?? []), ...(img.userTags ?? [])]) {
+    for (const t of img.userTags ?? []) {
       tags.set(t, (tags.get(t) ?? 0) + 1)
     }
   }
@@ -137,12 +145,12 @@ function computeFilterOptions(images: PhotoImage[]): FilterOptions {
   return {
     formats: Array.from(formats.entries())
       .sort((a, b) => b[1] - a[1])
-      .map(([id, count]) => ({ id, label: id.toUpperCase(), count })),
+      .map(([id, count]) => ({ id, label: `${id.toUpperCase()} 格式`, count })),
     sizes: Array.from(sizes.entries())
       .map(([id, count]) => ({ id, label: SIZE_LABELS[id] ?? id, count }))
       .sort((a, b) => a.id.localeCompare(b.id)),
     orient: Array.from(orient.entries())
-      .map(([id, count]) => ({ id, label: id, count }))
+      .map(([id, count]) => ({ id, label: ORIENT_LABELS[id] ?? id, count }))
       .sort((a, b) => a.id.localeCompare(b.id)),
     tags: Array.from(tags.entries())
       .sort((a, b) => b[1] - a[1])
@@ -172,14 +180,20 @@ function applyFilters(
   const sizes = new Set((filters.sizes ?? []).map((x) => String(x)))
   const orient = new Set((filters.orient ?? []).map((x) => String(x)))
   const tags = new Set((filters.tags ?? []).map((x) => String(x)))
+  const tr = filters.fileTimeRange
 
   return images.filter((img) => {
     if (formats.size && !formats.has(String(img.ext ?? '').toLowerCase())) return false
     if (sizes.size && !sizes.has(sizeBucket(img.sizeBytes))) return false
     if (orient.size && !orient.has(String(img.orientation ?? 'unknown'))) return false
     if (tags.size) {
-      const all = new Set([...(img.autoTags ?? []), ...(img.userTags ?? [])])
-      for (const t of tags) if (!all.has(t)) return false
+      const user = new Set(img.userTags ?? [])
+      for (const t of tags) if (!user.has(t)) return false
+    }
+    if (tr != null) {
+      const c = img.createdAt
+      if (c == null || Number.isNaN(c)) return false
+      if (c < tr.startMs || c > tr.endMs) return false
     }
     return true
   })

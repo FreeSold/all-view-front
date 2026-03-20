@@ -4,7 +4,10 @@
 
 import { idbGet, idbSet } from './photoIdb'
 import { sha256Hex } from '../util/photoHash'
-import type { PhotoIndex, PhotoTags } from './photoTypes'
+import { nanoid } from '../util/photoId'
+import { computeAutoTags, extOf } from '../util/photoTags'
+import { setCachedRoot } from './appRoot'
+import type { PhotoImage, PhotoIndex, PhotoTags } from './photoTypes'
 
 const IDB_KEY = 'photoManagerRootHandle'
 const FILE_INDEX = 'index.json'
@@ -30,6 +33,7 @@ export class PhotoFsRepo {
     }
     this.rootHandle = h
     await idbSet(IDB_KEY, h)
+    setCachedRoot(h)
     return h
   }
 
@@ -37,6 +41,7 @@ export class PhotoFsRepo {
     const h = await idbGet<FileSystemDirectoryHandle>(IDB_KEY)
     if (!h) return null
     this.rootHandle = h
+    setCachedRoot(h)
     return h
   }
 
@@ -134,6 +139,102 @@ export class PhotoFsRepo {
     return sha256Hex(buf)
   }
 
+  /**
+   * index.json 缺失或为空时，扫描 library/ 下已有图片并生成索引（尽力匹配 thumbs/{id}.webp）
+   */
+  async rebuildIndexFromLibraryFiles(): Promise<PhotoImage[]> {
+    if (!this.rootHandle) await this.tryRestoreRoot()
+    if (!this.rootHandle) return []
+    const ok = await this._ensurePermission(this.rootHandle, true)
+    if (!ok) return []
+    let lib: FileSystemDirectoryHandle
+    try {
+      lib = await this.rootHandle.getDirectoryHandle('library', { create: false })
+    } catch {
+      return []
+    }
+    const list = await this._collectLibraryImageEntries(lib, '')
+    const images: PhotoImage[] = []
+    for (const { libraryRelPath, fh } of list) {
+      try {
+        const file = await fh.getFile()
+        const name = file.name
+        const ext = extOf(name)
+        const base = name.replace(/\.[^.]+$/, '') || 'img'
+        let id = ''
+        const u = base.lastIndexOf('__')
+        if (u >= 0) id = base.slice(u + 2).trim()
+        if (!id || id.length < 4) id = nanoid()
+
+        let thumbRelPath: string | undefined
+        const thumbById = await this._tryGetFileReadOnly(`thumbs/${id}.webp`)
+        if (thumbById) thumbRelPath = `thumbs/${id}.webp`
+        else {
+          const hash = await this.hashFile(file)
+          const thumbByHash = await this._tryGetFileReadOnly(`thumbs/${hash}.webp`)
+          if (thumbByHash) thumbRelPath = `thumbs/${hash}.webp`
+        }
+
+        const createdAt = file.lastModified ?? Date.now()
+        images.push({
+          id,
+          originalName: name,
+          sizeBytes: file.size,
+          ext,
+          createdAt,
+          importedAt: createdAt,
+          libraryRelPath,
+          thumbRelPath,
+          autoTags: computeAutoTags({ width: 0, height: 0 }),
+          userTags: [],
+        })
+      } catch {
+        // skip broken entry
+      }
+    }
+    return images
+  }
+
+  private async _collectLibraryImageEntries(
+    dir: FileSystemDirectoryHandle,
+    prefix: string
+  ): Promise<{ libraryRelPath: string; fh: FileSystemFileHandle }[]> {
+    const out: { libraryRelPath: string; fh: FileSystemFileHandle }[] = []
+    for await (const entry of dir.values()) {
+      if (entry.kind === 'file') {
+        const fh = entry as FileSystemFileHandle
+        const file = await fh.getFile()
+        if (isImageFile(file)) {
+          out.push({ libraryRelPath: `library/${prefix}${entry.name}`, fh })
+        }
+      } else if (entry.kind === 'directory') {
+        const sub = entry as FileSystemDirectoryHandle
+        out.push(...(await this._collectLibraryImageEntries(sub, `${prefix}${entry.name}/`)))
+      }
+    }
+    return out
+  }
+
+  private async _tryGetFileReadOnly(relPath: string): Promise<FileSystemFileHandle | null> {
+    const { dirPath, fileName } = splitPath(relPath)
+    let cur = this.rootHandle
+    if (!cur) return null
+    if (dirPath) {
+      for (const part of dirPath.split('/').filter(Boolean)) {
+        try {
+          cur = await cur.getDirectoryHandle(part, { create: false })
+        } catch {
+          return null
+        }
+      }
+    }
+    try {
+      return await cur.getFileHandle(fileName, { create: false })
+    } catch {
+      return null
+    }
+  }
+
   private async _requireRoot(): Promise<void> {
     if (!this.rootHandle) await this.tryRestoreRoot()
     if (!this.rootHandle) throw new Error('未选择数据目录')
@@ -202,15 +303,6 @@ function isImageFile(file: File): boolean {
   if (file.type?.startsWith('image/')) return true
   const name = (file.name ?? '').toLowerCase()
   return /\.(png|jpe?g|webp|gif|bmp|avif|heic)$/i.test(name)
-}
-
-async function* walkDir(
-  dirHandle: FileSystemDirectoryHandle
-): AsyncGenerator<FileSystemFileHandle | FileSystemDirectoryHandle> {
-  for await (const entry of dirHandle.values()) {
-    yield entry
-    if (entry.kind === 'directory') yield* walkDir(entry as FileSystemDirectoryHandle)
-  }
 }
 
 /** 遍历目录，排除指定名称的子目录（如 library、thumbs） */
