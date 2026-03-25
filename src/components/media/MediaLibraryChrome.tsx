@@ -2,6 +2,32 @@ import { CaretDownOutlined, CaretUpOutlined } from '@ant-design/icons'
 import { Button, Card, Space, Tag, Typography } from 'antd'
 import type { CSSProperties, ReactNode } from 'react'
 
+type SelectAllToggleButtonProps = {
+  /** 当前筛选结果总数（为 0 时禁用） */
+  total: number
+  /** 当前已选数量 */
+  selectedCount: number
+  onToggle: () => void
+}
+
+/**
+ * 全选切换按钮：全部已选时高亮（primary）且再次点击取消全选；
+ * 否则点击选中所有当前结果。三个媒体管理页共用。
+ */
+export function SelectAllToggleButton({ total, selectedCount, onToggle }: SelectAllToggleButtonProps) {
+  const allSelected = total > 0 && selectedCount === total
+  return (
+    <Button
+      size="small"
+      type={allSelected ? 'primary' : 'default'}
+      disabled={total === 0}
+      onClick={onToggle}
+    >
+      全选
+    </Button>
+  )
+}
+
 const FILTER_TAG: CSSProperties = {
   fontSize: 11,
   lineHeight: '18px',

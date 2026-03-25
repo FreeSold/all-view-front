@@ -1,6 +1,7 @@
 import { CaretDownOutlined, CaretUpOutlined, ExportOutlined, InboxOutlined, PictureOutlined } from '@ant-design/icons'
 import {
   Alert,
+  App,
   Button,
   Card,
   Col,
@@ -8,15 +9,15 @@ import {
   Empty,
   Image,
   Input,
-  List,
   Modal,
-  Popover,
+  Pagination,
   Row,
   Select,
   Space,
+  Spin,
   Tag,
+  Tooltip,
   Typography,
-  message,
 } from 'antd'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
@@ -26,6 +27,7 @@ import { useSearchParams } from 'react-router-dom'
 import { useAppShell } from '../context/AppShellContext'
 import { usePhotoFolder } from '../context/PhotoFolderContext'
 import { usePhotoStateContext } from '../context/PhotoStateContext'
+import { SelectAllToggleButton } from '../components/media/MediaLibraryChrome'
 import { PhotoPageToolbar } from './PhotoManagement/PhotoPageToolbar'
 import { buildPhotoExportTasks } from '../export/photoExport'
 import { buildPhotoExportFolderName } from '../export/photoExportLabel'
@@ -53,13 +55,10 @@ function ThumbImage({
   img,
   size = 140,
   loadThumb,
-  onOpen,
 }: {
   img: PhotoImage & { displayName?: string }
   size?: number
   loadThumb: (relPath: string | undefined) => Promise<string>
-  /** 传入时：点击缩略图打开大图（关闭 antd 内置预览，避免误触） */
-  onOpen?: () => void
 }) {
   const [src, setSrc] = useState<string>('')
   useEffect(() => {
@@ -73,32 +72,12 @@ function ThumbImage({
   }, [img.thumbRelPath, loadThumb])
   return (
     <div
-      role={onOpen ? 'button' : undefined}
-      tabIndex={onOpen ? 0 : undefined}
-      onKeyDown={
-        onOpen
-          ? (e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault()
-                onOpen()
-              }
-            }
-          : undefined
-      }
-      onClick={
-        onOpen
-          ? (e) => {
-              e.stopPropagation()
-              onOpen()
-            }
-          : undefined
-      }
+      className="media-thumb-hover-dim"
       style={{
         width: size,
         height: size,
         overflow: 'hidden',
         background: '#f0f0f0',
-        cursor: onOpen ? 'pointer' : undefined,
       }}
     >
       {src ? (
@@ -121,6 +100,111 @@ function ThumbImage({
           <PictureOutlined style={{ fontSize: 24, color: '#999' }} />
         </div>
       )}
+      <div className="media-thumb-hover-dim-overlay" aria-hidden />
+    </div>
+  )
+}
+
+/**
+ * Tooltip 的触发器必须是可直接挂 ref 的单一节点；点击打开大图也在此层处理，
+ * 避免内层 stopPropagation 与 rc-trigger 事件顺序冲突导致点击无响应。
+ */
+function PhotoThumbWithTooltip({
+  img,
+  size,
+  loadThumb,
+  onOpenPreview,
+  triggerStyle,
+}: {
+  img: PhotoImage & { displayName?: string }
+  size: number
+  loadThumb: (relPath: string | undefined) => Promise<string>
+  onOpenPreview: (img: PhotoImage & { displayName?: string }) => void
+  triggerStyle?: CSSProperties
+}) {
+  return (
+    <Tooltip title={<PhotoThumbHoverTitle img={img} loadThumb={loadThumb} />} mouseEnterDelay={0.15}>
+      <div
+        role="button"
+        tabIndex={0}
+        style={{
+          display: 'inline-block',
+          lineHeight: 0,
+          verticalAlign: 'top',
+          cursor: 'pointer',
+          ...triggerStyle,
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onOpenPreview(img)
+          }
+        }}
+        onClick={(e) => {
+          e.stopPropagation()
+          onOpenPreview(img)
+        }}
+      >
+        <ThumbImage img={img} size={size} loadThumb={loadThumb} />
+      </div>
+    </Tooltip>
+  )
+}
+
+/** 与视频/漫画封面 Tooltip 一致：悬停展示大图 + 路径信息（缩略图异步加载） */
+function PhotoThumbHoverTitle({
+  img,
+  loadThumb,
+}: {
+  img: PhotoImage & { displayName?: string }
+  loadThumb: (relPath: string | undefined) => Promise<string>
+}) {
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    setUrl(null)
+    void loadThumb(img.thumbRelPath).then((u) => {
+      if (!cancelled && u) setUrl(u)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [img.thumbRelPath, loadThumb])
+  const meta = `${img.displayName ?? img.originalName ?? ''}\n${img.libraryRelPath ?? ''}`
+  if (!url) {
+    return (
+      <div
+        style={{
+          width: 300,
+          height: 300,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: '#111',
+        }}
+      >
+        <Spin size="small" />
+      </div>
+    )
+  }
+  return (
+    <div>
+      <img
+        src={url}
+        alt=""
+        style={{ width: 300, height: 300, objectFit: 'contain', background: '#111', display: 'block' }}
+      />
+      <pre
+        style={{
+          margin: 0,
+          fontSize: 11,
+          maxWidth: 300,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-all',
+        }}
+      >
+        {meta}
+      </pre>
     </div>
   )
 }
@@ -180,6 +264,7 @@ function PhotoTitleRow({ img }: { img: PhotoImage & { displayName?: string } }) 
 }
 
 export default function PhotoManagementPage() {
+  const { message, modal } = App.useApp()
   const [searchParams] = useSearchParams()
   const photoFolder = usePhotoFolder()
   const { setContentHeaderRight } = useAppShell()
@@ -216,12 +301,6 @@ export default function PhotoManagementPage() {
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<string[]>([])
   const [exportingSelected, setExportingSelected] = useState(false)
   const [deletingSelected, setDeletingSelected] = useState(false)
-  const [hoverPreview, setHoverPreview] = useState<{
-    x: number
-    y: number
-    thumbUrl: string
-    meta: string
-  } | null>(null)
   const thumbCache = useRef<Map<string, string>>(new Map())
   const lastTreeRef = useRef<string>('')
 
@@ -270,17 +349,20 @@ export default function PhotoManagementPage() {
 
   const openLargePreview = useCallback(
     async (img: PhotoImage & { displayName?: string }) => {
-      if (!fs.rootHandle) return
+      if (!fs.rootHandle) {
+        message.warning('请先选择数据目录')
+        return
+      }
       try {
         if (largePreviewUrlRef.current) {
           URL.revokeObjectURL(largePreviewUrlRef.current)
           largePreviewUrlRef.current = null
         }
-        const url = await repo.readBlobUrl(img.libraryRelPath)
+        const url = await repo.readPhotoImageBlobUrl(img)
         largePreviewUrlRef.current = url
         setLargePreview({ imgId: img.id, url })
-      } catch {
-        message.error('无法打开原图')
+      } catch (e) {
+        message.error(e instanceof Error ? e.message : '无法打开原图')
       }
     },
     [fs.rootHandle, repo]
@@ -341,6 +423,11 @@ export default function PhotoManagementPage() {
   useEffect(() => {
     if (listPage > listMaxPage) setListPage(listMaxPage)
   }, [listPage, listMaxPage])
+
+  const listPageItems = useMemo(() => {
+    const start = (listPage - 1) * listPageSize
+    return listFiltered.slice(start, start + listPageSize)
+  }, [listFiltered, listPage, listPageSize])
 
   const selectedFilteredPhotos = useMemo(() => {
     if (!selectedPhotoIds.length) return []
@@ -460,7 +547,7 @@ export default function PhotoManagementPage() {
       message.warning('请先选择要删除的图片')
       return
     }
-    Modal.confirm({
+    modal.confirm({
       title: '确认删除已选图片？',
       content: `将从管理索引删除 ${selectedFilteredPhotos.length} 条记录（不删除原始文件）。`,
       okText: '删除',
@@ -478,7 +565,7 @@ export default function PhotoManagementPage() {
         }
       },
     })
-  }, [selectedFilteredPhotos, removeImagesByIds])
+  }, [selectedFilteredPhotos, removeImagesByIds, modal, message])
 
   useLayoutEffect(() => {
     if (!isSupported) {
@@ -571,16 +658,13 @@ export default function PhotoManagementPage() {
 
   const resultsCardExtra = (
     <Space size={4} wrap style={{ justifyContent: 'flex-end' }}>
-      <Button
-        size="small"
-        type={allCurrentPhotosSelected ? 'primary' : 'default'}
-        onClick={() =>
-          setSelectedPhotoIds(() => (allCurrentPhotosSelected ? [] : listFiltered.map((x) => x.id)))
+      <SelectAllToggleButton
+        total={listFiltered.length}
+        selectedCount={selectedFilteredPhotos.length}
+        onToggle={() =>
+          setSelectedPhotoIds(allCurrentPhotosSelected ? [] : listFiltered.map((x) => x.id))
         }
-        disabled={!listFiltered.length}
-      >
-        全选
-      </Button>
+      />
       <Button
         size="small"
         icon={<ExportOutlined />}
@@ -882,56 +966,48 @@ export default function PhotoManagementPage() {
               ) : listFiltered.length === 0 ? (
                 <Empty description="无匹配结果" />
               ) : effectiveViewMode === 'list' ? (
-                <List
-                  size="small"
-                  dataSource={listFiltered}
-                  pagination={{
-                    current: listPage,
-                    pageSize: listPageSize,
-                    total: listFiltered.length,
-                    showSizeChanger: false,
-                    showTotal: (t) => `共 ${t} 条`,
-                    onChange: (p) => setListPage(p),
-                  }}
-                  renderItem={(img: (typeof derived.results)[0]) => (
-                    <List.Item
-                      onMouseEnter={(e) => {
-                        loadThumb(img.thumbRelPath).then((url) => {
-                          if (url)
-                            setHoverPreview({
-                              x: e.clientX + 16,
-                              y: e.clientY + 16,
-                              thumbUrl: url,
-                              meta: `${img.displayName}\n${img.libraryRelPath}`,
-                            })
-                        })
-                      }}
-                      onMouseLeave={() => setHoverPreview(null)}
-                    >
-                      <List.Item.Meta
-                        avatar={
-                          <div className="media-select-host" style={{ width: 48, height: 48 }}>
-                            <ThumbImage
-                              img={img}
-                              size={48}
-                              loadThumb={loadThumb}
-                              onOpen={() => void openLargePreview(img)}
-                            />
-                            <div
-                              role="button"
-                              aria-label={selectedPhotoIds.includes(img.id) ? '取消选择' : '选择图片'}
-                              className={`media-select-dot ${selectedPhotoIds.includes(img.id) ? 'is-selected' : ''}`}
-                              onClick={(ev) => {
-                                ev.stopPropagation()
-                                setSelectedPhotoIds((prev) =>
-                                  prev.includes(img.id) ? prev.filter((id) => id !== img.id) : [...prev, img.id],
-                                )
-                              }}
-                            />
+                <div>
+                  <ul
+                    style={{
+                      listStyle: 'none',
+                      margin: 0,
+                      padding: 0,
+                    }}
+                  >
+                    {listPageItems.map((img: (typeof derived.results)[0]) => (
+                      <li
+                        key={img.id}
+                        style={{
+                          display: 'flex',
+                          gap: 16,
+                          alignItems: 'flex-start',
+                          padding: '12px 0',
+                          borderBlockEnd: '1px solid rgba(5, 5, 5, 0.06)',
+                        }}
+                      >
+                        <div className="media-select-host" style={{ width: 48, height: 48, flexShrink: 0 }}>
+                          <PhotoThumbWithTooltip
+                            img={img}
+                            size={48}
+                            loadThumb={loadThumb}
+                            onOpenPreview={(i) => void openLargePreview(i)}
+                          />
+                          <div
+                            role="button"
+                            aria-label={selectedPhotoIds.includes(img.id) ? '取消选择' : '选择图片'}
+                            className={`media-select-dot ${selectedPhotoIds.includes(img.id) ? 'is-selected' : ''}`}
+                            onClick={(ev) => {
+                              ev.stopPropagation()
+                              setSelectedPhotoIds((prev) =>
+                                prev.includes(img.id) ? prev.filter((id) => id !== img.id) : [...prev, img.id],
+                              )
+                            }}
+                          />
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ marginBottom: 8 }}>
+                            <PhotoTitleRow img={img} />
                           </div>
-                        }
-                        title={<PhotoTitleRow img={img} />}
-                        description={
                           <Space wrap size={[4, 4]} style={{ width: '100%' }}>
                             {(img.userTags ?? []).map((t: string) => (
                               <Tag key={t} color="blue">
@@ -944,11 +1020,21 @@ export default function PhotoManagementPage() {
                               onSuggest={getTagSuggestions}
                             />
                           </Space>
-                        }
-                      />
-                    </List.Item>
-                  )}
-                />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+                    <Pagination
+                      current={listPage}
+                      pageSize={listPageSize}
+                      total={listFiltered.length}
+                      showSizeChanger={false}
+                      showTotal={(t) => `共 ${t} 条`}
+                      onChange={(p) => setListPage(p)}
+                    />
+                  </div>
+                </div>
               ) : (
                 <Row gutter={[12, 12]}>
                   {listFiltered.map((img: (typeof derived.results)[0]) => (
@@ -956,26 +1042,14 @@ export default function PhotoManagementPage() {
                       <Card
                         size="small"
                         hoverable
-                        onMouseEnter={(e) => {
-                          loadThumb(img.thumbRelPath).then((url) => {
-                            if (url) {
-                              setHoverPreview({
-                                x: e.clientX + 16,
-                                y: e.clientY + 16,
-                                thumbUrl: url,
-                                meta: `${img.displayName}\n${img.libraryRelPath}`,
-                              })
-                            }
-                          })
-                        }}
-                        onMouseLeave={() => setHoverPreview(null)}
                         cover={
                           <div className="media-select-host">
-                            <ThumbImage
+                            <PhotoThumbWithTooltip
                               img={img}
                               size={160}
                               loadThumb={loadThumb}
-                              onOpen={() => void openLargePreview(img)}
+                              onOpenPreview={(i) => void openLargePreview(i)}
+                              triggerStyle={{ display: 'block' }}
                             />
                             <div
                               role="button"
@@ -1119,15 +1193,17 @@ export default function PhotoManagementPage() {
             {importFilesList.length === 0 ? (
               <Empty description="选择文件或文件夹以预览" />
             ) : (
-              <List
-                size="small"
-                dataSource={importFilesList.slice(0, 100)}
-                renderItem={(p: PhotoImportPickItem) => (
-                  <List.Item>
-                    {p.file.name} — {formatBytes(p.file.size)}
-                  </List.Item>
-                )}
-              />
+              importFilesList.slice(0, 100).map((p: PhotoImportPickItem, idx: number, arr: PhotoImportPickItem[]) => (
+                <div
+                  key={`${p.file.name}-${p.file.size}-${idx}`}
+                  style={{
+                    padding: '8px 0',
+                    borderBottom: idx < arr.length - 1 ? '1px solid #f0f0f0' : undefined,
+                  }}
+                >
+                  {p.file.name} — {formatBytes(p.file.size)}
+                </div>
+              ))
             )}
             {importFilesList.length > 100 && (
               <Typography.Text type="secondary">
@@ -1138,31 +1214,6 @@ export default function PhotoManagementPage() {
         </Space>
       </Modal>
 
-      {hoverPreview && (
-        <Popover
-          open={!!hoverPreview}
-          content={
-            <div>
-              <img
-                src={hoverPreview.thumbUrl}
-                alt=""
-                style={{ maxWidth: 300, maxHeight: 300 }}
-              />
-              <pre style={{ margin: 0, fontSize: 11 }}>{hoverPreview.meta}</pre>
-            </div>
-          }
-        >
-          <div
-            style={{
-              position: 'fixed',
-              left: hoverPreview.x,
-              top: hoverPreview.y,
-              pointerEvents: 'none',
-              zIndex: 9999,
-            }}
-          />
-        </Popover>
-      )}
     </div>
   )
 }

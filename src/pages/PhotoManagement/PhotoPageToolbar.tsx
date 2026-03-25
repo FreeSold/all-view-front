@@ -1,14 +1,14 @@
-import { FolderOpenOutlined, PlusOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
-import { Alert, Button, Space, Typography } from 'antd'
+import { PlusOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
+import { Alert, Button, Space } from 'antd'
 import { usePhotoStateContext } from '../../context/PhotoStateContext'
 
 type Props = {
   onOpenImport: () => void
 }
 
-/** 图片管理：面包屑右侧工具栏（与漫画管理顶栏两侧布局一致） */
+/** 图片管理：面包屑右侧工具栏。数据目录选择已统一移至顶部 Header。 */
 export function PhotoPageToolbar({ onOpenImport }: Props) {
-  const { fs, pickRoot, reauth, needsReauth } = usePhotoStateContext()
+  const { fs, reauth, needsReauth } = usePhotoStateContext()
 
   return (
     <Space orientation="vertical" size={8} style={{ width: '100%', alignItems: 'flex-end' }}>
@@ -34,17 +34,9 @@ export function PhotoPageToolbar({ onOpenImport }: Props) {
           }
         />
       )}
-      <Space wrap style={{ justifyContent: 'flex-end' }}>
-        <Typography.Text strong style={{ maxWidth: 220 }} ellipsis>
-          {fs.rootHandle ? `数据目录：${fs.rootName}` : '未选择数据目录'}
-        </Typography.Text>
-        <Button type="primary" icon={<FolderOpenOutlined />} onClick={pickRoot}>
-          选择数据目录
-        </Button>
-        <Button icon={<PlusOutlined />} disabled={!fs.rootHandle || needsReauth} onClick={onOpenImport}>
-          导入图片
-        </Button>
-      </Space>
+      <Button icon={<PlusOutlined />} disabled={!fs.rootHandle || needsReauth} onClick={onOpenImport}>
+        导入图片
+      </Button>
     </Space>
   )
 }

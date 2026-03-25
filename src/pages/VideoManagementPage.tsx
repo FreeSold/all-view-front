@@ -36,7 +36,7 @@ import { Resizable } from 'react-resizable'
 import { theme } from 'antd'
 import { CoverCropModal } from '../components/CoverCropModal'
 import { MediaAppToolbar } from '../components/MediaAppToolbar'
-import { MediaFilterSortCard, MediaResultsCard } from '../components/media/MediaLibraryChrome'
+import { MediaFilterSortCard, MediaResultsCard, SelectAllToggleButton } from '../components/media/MediaLibraryChrome'
 import { useAppShell } from '../context/AppShellContext'
 import { buildMediaLibraryExportFolderName } from '../export/mediaExportLabel'
 import { exportFileTasksToUserFolder, isFsDirectoryPickerSupported } from '../export/fsExportCore'
@@ -1403,14 +1403,13 @@ export function VideoManagementPage() {
         title={`${filtered.length} 部${selectedFilteredVideos.length ? ` · 已选 ${selectedFilteredVideos.length}` : ''}`}
         extra={
           <Space wrap size={4} style={{ justifyContent: 'flex-end' }}>
-            <Button
-              size="small"
-              type={allCurrentVideosSelected ? 'primary' : 'default'}
-              disabled={!filtered.length}
-              onClick={() => setSelectedIds(() => (allCurrentVideosSelected ? [] : filtered.map((v) => v.id)))}
-            >
-              全选
-            </Button>
+            <SelectAllToggleButton
+              total={filtered.length}
+              selectedCount={selectedFilteredVideos.length}
+              onToggle={() =>
+                setSelectedIds(allCurrentVideosSelected ? [] : filtered.map((v) => v.id))
+              }
+            />
             <Button
               size="small"
               icon={<ExportOutlined />}

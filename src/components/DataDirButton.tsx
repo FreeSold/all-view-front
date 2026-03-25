@@ -7,9 +7,11 @@ import { isAppRootSupported, pickRoot } from '../storage/appRoot'
 type DataDirButtonProps = {
   /** 选择目录并成功迁移后调用（用于刷新顶栏「数据目录」展示等） */
   onAfterPick?: () => void
+  /** 已选中的数据目录名；有值时按钮文案为「目录：名称」，否则为「选择数据目录」 */
+  dirName?: string | null
 }
 
-export function DataDirButton({ onAfterPick }: DataDirButtonProps = {}) {
+export function DataDirButton({ onAfterPick, dirName }: DataDirButtonProps = {}) {
   const { message } = App.useApp()
   const [loading, setLoading] = useState(false)
 
@@ -52,9 +54,28 @@ export function DataDirButton({ onAfterPick }: DataDirButtonProps = {}) {
 
   if (!isAppRootSupported()) return null
 
+  const label = dirName ? `目录：${dirName}` : '选择数据目录'
+
   return (
-    <Button icon={<FolderOpenOutlined />} onClick={handleClick} loading={loading}>
-      选择数据目录
+    <Button
+      icon={<FolderOpenOutlined />}
+      onClick={handleClick}
+      loading={loading}
+      title={label}
+      style={{ maxWidth: 320 }}
+    >
+      <span
+        style={{
+          display: 'inline-block',
+          maxWidth: 260,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          verticalAlign: 'bottom',
+        }}
+      >
+        {label}
+      </span>
     </Button>
   )
 }

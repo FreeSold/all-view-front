@@ -36,7 +36,7 @@ import { Resizable } from 'react-resizable'
 import { theme } from 'antd'
 import { CoverCropModal } from '../components/CoverCropModal'
 import { MediaAppToolbar } from '../components/MediaAppToolbar'
-import { MediaFilterSortCard, MediaResultsCard } from '../components/media/MediaLibraryChrome'
+import { MediaFilterSortCard, MediaResultsCard, SelectAllToggleButton } from '../components/media/MediaLibraryChrome'
 import { useAppShell } from '../context/AppShellContext'
 import { buildMediaLibraryExportFolderName } from '../export/mediaExportLabel'
 import { exportFileTasksToUserFolder, isFsDirectoryPickerSupported } from '../export/fsExportCore'
@@ -412,7 +412,6 @@ export function ComicManagementPage() {
   const [detailMode, setDetailMode] = useState<'create' | 'edit'>('edit')
   const [originalId, setOriginalId] = useState<string | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
-  const [exportFilteredLoading, setExportFilteredLoading] = useState(false)
   const [exportSelectedLoading, setExportSelectedLoading] = useState(false)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
 
@@ -530,6 +529,7 @@ export function ComicManagementPage() {
     const idSet = new Set(selectedIds)
     return filtered.filter((v) => idSet.has(v.id))
   }, [selectedIds, filtered])
+  const allCurrentComicsSelected = filtered.length > 0 && selectedFilteredComics.length === filtered.length
 
   useEffect(() => {
     const idSet = new Set(comics.map((v) => v.id))
@@ -549,47 +549,6 @@ export function ComicManagementPage() {
       createdRange: undefined,
     })
   }, [patchComicUi])
-
-  const handleExportFilteredComics = useCallback(async () => {
-    if (!filtered.length) {
-      message.warning('当前没有可导出的漫画')
-      return
-    }
-    if (!isFsDirectoryPickerSupported()) {
-      message.info('请使用 Chrome 或 Edge，并允许选择保存文件夹')
-      return
-    }
-    setExportFilteredLoading(true)
-    try {
-      const folderName = buildMediaLibraryExportFolderName(comicUi, 'comic')
-      const { tasks, skipMessages } = buildWorkMediaExportTasks(filtered, isElectron)
-      if (!tasks.length) {
-        message.warning(
-          skipMessages[0] ??
-            '没有可导出的文件（封面/资源需为网络地址、或浏览器内授权的本地文件句柄）',
-        )
-        return
-      }
-      const result = await exportFileTasksToUserFolder(tasks, folderName)
-      if (result == null) return
-      if (result.ok === 0 && result.errors.length) {
-        message.error(result.errors[0] ?? '导出失败')
-        return
-      }
-      const parts = [`已导出 ${result.ok} 个文件到「${result.folderName}」`]
-      if (result.fail) parts.push(`失败 ${result.fail}`)
-      message.success(parts.join('；'))
-      if (result.errors.length) console.warn(result.errors)
-      if (skipMessages.length) {
-        message.info('部分资源已跳过（如仅桌面路径），详情见控制台')
-        console.warn(skipMessages)
-      }
-    } catch (e) {
-      message.error(e instanceof Error ? e.message : String(e))
-    } finally {
-      setExportFilteredLoading(false)
-    }
-  }, [filtered, comicUi, isElectron])
 
   const handleExportSelectedComics = useCallback(async () => {
     if (!selectedFilteredComics.length) {
@@ -1338,18 +1297,16 @@ export function ComicManagementPage() {
       </MediaFilterSortCard>
 
       <MediaResultsCard
-        title={`${filtered.length} 部`}
+        title={`${filtered.length} 部${selectedFilteredComics.length ? ` · 已选 ${selectedFilteredComics.length}` : ''}`}
         extra={
           <Space wrap size={4} style={{ justifyContent: 'flex-end' }}>
-            {selectedFilteredComics.length > 0 ? (
-              <Tag color="processing">已选 {selectedFilteredComics.length}</Tag>
-            ) : null}
-            <Button size="small" disabled={!filtered.length} onClick={() => setSelectedIds(filtered.map((v) => v.id))}>
-              全选当前结果
-            </Button>
-            <Button size="small" disabled={!selectedIds.length} onClick={() => setSelectedIds([])}>
-              清空选择
-            </Button>
+            <SelectAllToggleButton
+              total={filtered.length}
+              selectedCount={selectedFilteredComics.length}
+              onToggle={() =>
+                setSelectedIds(allCurrentComicsSelected ? [] : filtered.map((v) => v.id))
+              }
+            />
             <Button
               size="small"
               loading={exportSelectedLoading}
@@ -1384,14 +1341,6 @@ export function ComicManagementPage() {
               ]}
               style={{ width: 88 }}
             />
-            <Button
-              size="small"
-              icon={<ExportOutlined />}
-              loading={exportFilteredLoading}
-              onClick={() => void handleExportFilteredComics()}
-            >
-              导出当前结果
-            </Button>
           </Space>
         }
       >

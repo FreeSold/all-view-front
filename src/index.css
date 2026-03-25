@@ -126,21 +126,24 @@ body {
   --select-accent-edge: #f6ad55;
 }
 
-/* Photo thumbs: add subtle hover darkening like video/comic cards. */
-.photo-thumb-surface {
+/*
+ * Custom media thumbs (e.g. photo FS thumbnails with preview={false}): hover dim like video/comic card covers.
+ * Use a real overlay node (not ::after) so stacking wins over antd .ant-image wrappers.
+ */
+.media-thumb-hover-dim {
   position: relative;
 }
 
-.photo-thumb-surface::after {
-  content: '';
+.media-thumb-hover-dim-overlay {
   position: absolute;
   inset: 0;
+  z-index: 2;
   background: rgba(0, 0, 0, 0.2);
   opacity: 0;
   transition: opacity 180ms ease;
   pointer-events: none;
 }
 
-.photo-thumb-surface:hover::after {
+.media-thumb-hover-dim:hover .media-thumb-hover-dim-overlay {
   opacity: 1;
 }

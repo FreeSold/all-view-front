@@ -1,10 +1,15 @@
-import { Breadcrumb, Button, Layout, Menu, Modal, Space, theme, Typography } from 'antd'
+import { Breadcrumb, Button, Layout, Menu, Modal, Space, theme, Tooltip, Typography } from 'antd'
 import { useAppShell } from '../context/AppShellContext'
 import { useGlobalLog } from '../context/GlobalLogContext'
-import { CaretLeftFilled, CaretRightFilled, QuestionCircleOutlined } from '@ant-design/icons'
+import {
+  CaretLeftFilled,
+  CaretRightFilled,
+  LogoutOutlined,
+  QuestionCircleOutlined,
+} from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AdminLogo } from './AdminLogo'
 import { useAuth } from '../auth/AuthContext'
 import { usePhotoFolder } from '../context/PhotoFolderContext'
@@ -13,6 +18,8 @@ import type { AppMenuItem } from '../menu/menuTypes'
 import { ThemeSwitcher } from '../components/ThemeSwitcher'
 import { useThemeMode } from '../theme/ThemeContext'
 import type { FolderTreeNode } from '../storage/photoTypes'
+import { DataDirButton } from '../components/DataDirButton'
+import { getRoot } from '../storage/appRoot'
 
 const { Header, Content, Sider } = Layout
 const PHOTO_FOLDER_PREFIX = 'photo:'
@@ -75,6 +82,15 @@ export function AdminLayout() {
 
   const [collapsed, setCollapsed] = useState(false)
   const [docOpen, setDocOpen] = useState(false)
+  const [dataDirName, setDataDirName] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    getRoot()
+      .then((h) => { if (!cancelled) setDataDirName(h?.name ?? null) })
+      .catch(() => { if (!cancelled) setDataDirName(null) })
+    return () => { cancelled = true }
+  }, [])
   const isOnPhotos = location.pathname === '/app/photos'
 
   const flat = useMemo(() => flatten(menuItems), [])
@@ -224,7 +240,9 @@ export function AdminLayout() {
             alignItems: 'center',
             justifyContent: 'center',
             background: token.colorPrimary,
-            border: `1px solid ${token.colorPrimary}`,
+            borderTop: `1px solid ${token.colorPrimary}`,
+            borderBottom: `1px solid ${token.colorPrimary}`,
+            borderLeft: `1px solid ${token.colorPrimary}`,
             borderRight: 'none',
             cursor: 'pointer',
             zIndex: 10,
@@ -248,11 +266,11 @@ export function AdminLayout() {
             justifyContent: 'space-between',
             paddingInline: 16,
             height: 56,
-            lineHeight: '56px',
+            lineHeight: 1,
           }}
         >
           <span />
-          <Space>
+          <Space align="center" size="middle">
             <ThemeSwitcher />
             <Button
               type="text"
@@ -263,14 +281,26 @@ export function AdminLayout() {
               title="操作文档"
             />
             <Typography.Text type="secondary">当前用户：{user!.username}</Typography.Text>
-            <Button
-              onClick={() => {
-                logout()
-                navigate('/login', { replace: true })
+            <DataDirButton
+              dirName={dataDirName}
+              onAfterPick={() => {
+                getRoot()
+                  .then((h) => setDataDirName(h?.name ?? null))
+                  .catch(() => {})
+                window.location.reload()
               }}
-            >
-              退出登录
-            </Button>
+            />
+            <Tooltip title="退出登录">
+              <Button
+                type="text"
+                icon={<LogoutOutlined />}
+                aria-label="退出登录"
+                onClick={() => {
+                  logout()
+                  navigate('/login', { replace: true })
+                }}
+              />
+            </Tooltip>
           </Space>
         </Header>
 
