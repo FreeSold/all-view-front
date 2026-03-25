@@ -13,7 +13,7 @@ import { getRoot, isAppRootSupported, pickRoot } from '../storage/appRoot'
 import { useAppConfig } from '../storage/useAppConfig'
 
 export function SystemConfigPage() {
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
   const [config, updateConfig] = useAppConfig()
   const { videoPlayerPath: playerPath, videoFilePath: videoPath } = config
   const [selectingPlayer, setSelectingPlayer] = useState(false)
@@ -143,7 +143,7 @@ export function SystemConfigPage() {
   }, [])
 
   const handleClearSavedData = useCallback(() => {
-    Modal.confirm({
+    modal.confirm({
       title: '清除保存数据？',
       content:
         '将删除：浏览器/Electron 内的应用数据；已选数据目录下的 app-data.json、index.json、tags.json；**整个 library/ 与 thumbs/ 文件夹（含其中所有文件）**；本地视频/图片句柄；并重置「已选目录」。数据目录内其它自建文件/文件夹会保留。此操作不可撤销，请先导出备份。',
@@ -164,7 +164,7 @@ export function SystemConfigPage() {
         }
       },
     })
-  }, [])
+  }, [modal, message])
 
   const handleImportFile = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {

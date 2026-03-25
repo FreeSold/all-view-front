@@ -60,7 +60,7 @@ function normalizeTags(tags: PhotoTags | null): PhotoTags {
 }
 
 export function usePhotoState() {
-  const { append: appendGlobalLog, lines: logLines } = useGlobalLog()
+  const { append: appendGlobalLog } = useGlobalLog()
   const repo = useRef(new PhotoFsRepo()).current
   const [fs, setFs] = useState<{ rootHandle: FileSystemDirectoryHandle | null; rootName: string }>({
     rootHandle: null,
@@ -465,7 +465,6 @@ export function usePhotoState() {
     index,
     tags,
     derived,
-    logLines,
     repo,
     loadAll,
     pickRoot,

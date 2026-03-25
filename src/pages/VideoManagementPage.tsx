@@ -9,6 +9,7 @@ import {
   SwapOutlined,
 } from '@ant-design/icons'
 import {
+  App,
   Button,
   Card,
   Col,
@@ -24,7 +25,6 @@ import {
   Tag,
   Tooltip,
   Typography,
-  message,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import type { CSSProperties } from 'react'
@@ -405,6 +405,7 @@ function PillList({
 }
 
 export function VideoManagementPage() {
+  const { message, modal } = App.useApp()
   const { token } = theme.useToken()
   const { setContentHeaderRight } = useAppShell()
   const { TextArea } = Input
@@ -687,7 +688,7 @@ export function VideoManagementPage() {
   )
 
   const handleDelete = useCallback((v: Video) => {
-    Modal.confirm({
+    modal.confirm({
       title: '确认删除？',
       content: `将删除作品：${v.name}`,
       okText: '删除',
@@ -701,7 +702,7 @@ export function VideoManagementPage() {
         message.success('已删除')
       },
     })
-  }, [])
+  }, [modal, message])
 
   const handleExportSelectedVideos = useCallback(async () => {
     if (!selectedFilteredVideos.length) {
@@ -741,7 +742,7 @@ export function VideoManagementPage() {
       message.warning('请先选择要删除的作品')
       return
     }
-    Modal.confirm({
+    modal.confirm({
       title: '确认删除已选作品？',
       content: `将删除 ${selectedFilteredVideos.length} 条作品记录。`,
       okText: '删除',
@@ -757,7 +758,7 @@ export function VideoManagementPage() {
         message.success(`已删除 ${selectedFilteredVideos.length} 条记录`)
       },
     })
-  }, [selectedFilteredVideos])
+  }, [selectedFilteredVideos, modal, message])
 
   const parseActors = useCallback((text: string): string[] => {
     return text
@@ -1119,7 +1120,7 @@ export function VideoManagementPage() {
 
   const primaryColor = token.colorPrimary
 
-  const columns: ColumnsType<Video> = [
+  const columns: ColumnsType<Video> = useMemo(() => [
     {
       title: '作品封面',
       dataIndex: 'coverUrl',
@@ -1275,7 +1276,8 @@ export function VideoManagementPage() {
         </Space>
       ),
     },
-  ]
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [colWidths, handleResize, token, selectedIds, setSelectedIds, openDetail, handlePlay, handleDelete, primaryColor])
 
   const viewMode = videoUi.viewMode === 'grid' ? 'grid' : 'list'
   const pageSize = videoUi.listPageSize ?? 10
@@ -1493,7 +1495,7 @@ export function VideoManagementPage() {
                             src={v.coverUrl}
                             alt={v.name}
                             style={{ height: 200, objectFit: 'cover' }}
-                            preview={{ mask: '放大' }}
+                            preview={{ mask: '放大', src: v.coverOriginalUrl || v.coverUrl }}
                           />
                         </Tooltip>
                         <div

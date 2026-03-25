@@ -394,7 +394,7 @@ function PillList({
 }
 
 export function ComicManagementPage() {
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
   const { token } = theme.useToken()
   const { setContentHeaderRight } = useAppShell()
   const { TextArea } = Input
@@ -588,7 +588,7 @@ export function ComicManagementPage() {
       message.warning('请先选择要删除的漫画')
       return
     }
-    Modal.confirm({
+    modal.confirm({
       title: '确认删除已选漫画？',
       content: `将删除 ${selectedFilteredComics.length} 条漫画记录。`,
       okText: '删除',
@@ -604,7 +604,7 @@ export function ComicManagementPage() {
         message.success(`已删除 ${selectedFilteredComics.length} 条记录`)
       },
     })
-  }, [selectedFilteredComics, message])
+  }, [selectedFilteredComics, message, modal])
 
   const toggleCategoryFilter = useCallback(
     (cat: string) => {
@@ -777,7 +777,7 @@ export function ComicManagementPage() {
   }, [editingComic, actorText, categoryText, tagText, descriptionText, detailMode, originalId, parseActors])
 
   const handleDelete = useCallback((v: Comic) => {
-    Modal.confirm({
+    modal.confirm({
       title: '确认删除？',
       content: `将删除漫画：${v.name}`,
       okText: '删除',
@@ -791,7 +791,7 @@ export function ComicManagementPage() {
         message.success('已删除')
       },
     })
-  }, [])
+  }, [modal, message])
 
   const addSource = useCallback(() => {
     if (!editingComic || !sourceForm.url.trim()) return
@@ -1033,7 +1033,7 @@ export function ComicManagementPage() {
 
   const primaryColor = token.colorPrimary
 
-  const columns: ColumnsType<Comic> = [
+  const columns: ColumnsType<Comic> = useMemo(() => [
     {
       title: '漫画封面',
       dataIndex: 'coverUrl',
@@ -1172,7 +1172,8 @@ export function ComicManagementPage() {
         </Space>
       ),
     },
-  ]
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [colWidths, handleResize, token, selectedIds, setSelectedIds, openDetail, handlePlay, handleDelete, primaryColor])
 
   const viewMode = comicUi.viewMode === 'grid' ? 'grid' : 'list'
   const pageSize = comicUi.listPageSize ?? 10
@@ -1309,6 +1310,7 @@ export function ComicManagementPage() {
             />
             <Button
               size="small"
+              icon={<ExportOutlined />}
               loading={exportSelectedLoading}
               disabled={!selectedFilteredComics.length}
               onClick={() => void handleExportSelectedComics()}

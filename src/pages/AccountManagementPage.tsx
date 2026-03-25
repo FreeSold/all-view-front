@@ -11,7 +11,7 @@ type AccountFormValues = {
 }
 
 export function AccountManagementPage() {
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
   const roles = mockDb.listRoles()
   const [rows, setRows] = useState<Account[]>(() => mockDb.listAccounts())
   const [open, setOpen] = useState(false)
@@ -103,7 +103,7 @@ export function AccountManagementPage() {
                   size="small"
                   icon={<DeleteOutlined />}
                   onClick={() => {
-                    Modal.confirm({
+                    modal.confirm({
                       title: '确认删除？',
                       content: `将删除账号：${record.username}`,
                       okText: '删除',

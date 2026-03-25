@@ -342,7 +342,7 @@ export function AdminLayout() {
         width={760}
         destroyOnHidden
       >
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
           <Typography.Text>
             本系统支持视频、漫画、图片统一管理。建议先在右上角选择数据目录，再开始录入与导出。
           </Typography.Text>
@@ -375,7 +375,7 @@ export function AdminLayout() {
           <Typography.Paragraph style={{ marginBottom: 0 }}>
             1）新增作品时选择本地文件，系统保存引用句柄与元数据。
             <br />
-            2）可按分类、标签、评分、日期等条件筛选，再批量导出结果。
+            2）可按分类、标签、日期等条件筛选，再批量导出结果。
             <br />
             3）选择目录时若关闭系统窗口，属于“取消操作”，系统不会报错并保持当前状态。
           </Typography.Paragraph>
