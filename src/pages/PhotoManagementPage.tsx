@@ -123,7 +123,13 @@ function PhotoThumbWithTooltip({
   triggerStyle?: CSSProperties
 }) {
   return (
-    <Tooltip title={<PhotoThumbHoverTitle img={img} loadThumb={loadThumb} />} mouseEnterDelay={0.15}>
+    <Tooltip
+      title={<PhotoThumbHoverTitle img={img} loadThumb={loadThumb} />}
+      mouseEnterDelay={0.15}
+      placement="left"
+      // Avoid tooltip popper affecting layout/scrollbars inside scroll containers.
+      getPopupContainer={() => document.body}
+    >
       <div
         role="button"
         tabIndex={0}

@@ -6,7 +6,7 @@ import {
   UploadOutlined,
   VideoCameraOutlined,
 } from '@ant-design/icons'
-import { Alert, App, Button, Card, Input, Modal, Space, Typography } from 'antd'
+import { Alert, App, Button, Card, Input, Space, Typography } from 'antd'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { exportAppData, importAppData, migrateToDataDir, resetAllApplicationData } from '../storage/appStore'
 import { getRoot, isAppRootSupported, pickRoot } from '../storage/appRoot'
@@ -146,7 +146,7 @@ export function SystemConfigPage() {
     modal.confirm({
       title: '清除保存数据？',
       content:
-        '将删除：浏览器/Electron 内的应用数据；已选数据目录下的 app-data.json、index.json、tags.json；**整个 library/ 与 thumbs/ 文件夹（含其中所有文件）**；本地视频/图片句柄；并重置「已选目录」。数据目录内其它自建文件/文件夹会保留。此操作不可撤销，请先导出备份。',
+        '将删除：浏览器/Electron 内的应用数据；已选数据目录下的应用数据（app/，包含视频/漫画/账号/图片的元信息与缩略图索引）；本地视频/图片句柄；并重置「已选目录」。数据目录内其它自建文件/文件夹会保留。此操作不可撤销，请先导出备份。',
       okText: '清除',
       okType: 'danger',
       cancelText: '取消',
@@ -230,7 +230,7 @@ export function SystemConfigPage() {
                 )}
               </Space>
               <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
-                选择后，视频、漫画、图片的元数据将统一存于此目录的 app-data.json、index.json 等。
+                选择后，视频、漫画、图片的元数据将统一存于此目录的应用数据（app/）内。
                 可将整个目录放在移动硬盘，插到任意电脑使用。
               </Typography.Text>
             </Space>
@@ -257,7 +257,7 @@ export function SystemConfigPage() {
             />
           </Space>
           <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
-            导出为 JSON 文件保存到本地。已选择数据目录时，数据存于目录内 app-data.json，可整体备份目录。
+            导出为 JSON 文件保存到本地。已选择数据目录时，应用数据存于目录内的 app/ 文件夹，可整体备份目录。
             「清除保存数据」会删除 JSON、清空 library/ 与 thumbs/、清除已选目录记录并刷新页面，请先导出备份。
           </Typography.Text>
         </Card>

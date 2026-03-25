@@ -58,7 +58,11 @@
     ],
     "asar": true,
     "forceCodeSigning": false,
-    "compression": "store",
+    "compression": "maximum",
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
     "win": {
       "signDlls": false,
       "signAndEditExecutable": false,

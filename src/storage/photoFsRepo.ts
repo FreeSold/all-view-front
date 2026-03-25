@@ -16,9 +16,22 @@ export type PhotoImportPickItem = {
   virtualLibraryRelPath: string
 }
 
-const FILE_INDEX = 'index.json'
-const FILE_TAGS = 'tags.json'
+const PHOTO_APP_DIR = 'app'
+const LEGACY_FILE_INDEX = 'index.json'
+const LEGACY_FILE_TAGS = 'tags.json'
+// New format: store photo index/tags and managed folders under dataRoot/app/
+const FILE_INDEX = `${PHOTO_APP_DIR}/${LEGACY_FILE_INDEX}`
+const FILE_TAGS = `${PHOTO_APP_DIR}/${LEGACY_FILE_TAGS}`
 const RESERVED_NAMES = ['library', 'thumbs']
+
+function toPhysicalRelPath(relPath: string): string {
+  const clean = String(relPath ?? '').replace(/^\/+/, '')
+  // Virtual paths stored inside index.json keep the old prefix: library/... / thumbs/...
+  if (clean.startsWith('library/') || clean.startsWith('thumbs/')) {
+    return `${PHOTO_APP_DIR}/${clean}`
+  }
+  return clean
+}
 
 export function isFileSystemAccessSupported(): boolean {
   return typeof window !== 'undefined' && 'showDirectoryPicker' in window
@@ -44,8 +57,9 @@ export class PhotoFsRepo {
   /** 仅在用户手势流程中调用（选择目录、导入等），以便 requestPermission 可用 */
   async ensureDirs(): Promise<void> {
     await this._requireRoot(true)
-    await this._ensureDir('library')
-    await this._ensureDir('thumbs')
+    // Physical folders inside dataRoot/app/
+    await this._ensureDir(`${PHOTO_APP_DIR}/library`)
+    await this._ensureDir(`${PHOTO_APP_DIR}/thumbs`)
   }
 
   /**
@@ -58,6 +72,14 @@ export class PhotoFsRepo {
     try {
       const index = (await this._readJson(FILE_INDEX).catch(() => null)) as PhotoIndex | null
       const tags = (await this._readJson(FILE_TAGS).catch(() => null)) as PhotoTags | null
+
+      // Backward compatibility for legacy photo data at dataRoot/
+      if (index == null && tags == null) {
+        const legacyIndex = (await this._readJson(LEGACY_FILE_INDEX).catch(() => null)) as PhotoIndex | null
+        const legacyTags = (await this._readJson(LEGACY_FILE_TAGS).catch(() => null)) as PhotoTags | null
+        return { index: legacyIndex, tags: legacyTags }
+      }
+
       return { index, tags }
     } catch {
       return { index: null, tags: null }
@@ -117,7 +139,8 @@ export class PhotoFsRepo {
 
   async copyIntoLibrary(file: File, libraryRelPath: string): Promise<void> {
     await this._requireRoot()
-    const { dirPath, fileName } = splitPath(libraryRelPath)
+    const physical = toPhysicalRelPath(libraryRelPath)
+    const { dirPath, fileName } = splitPath(physical)
     const dirHandle = await this._ensureDir(dirPath)
     const fh = await dirHandle.getFileHandle(fileName, { create: true })
     const writable = await fh.createWritable()
@@ -130,7 +153,8 @@ export class PhotoFsRepo {
 
   async writeBlob(relPath: string, blob: Blob): Promise<void> {
     await this._requireRoot(true)
-    const { dirPath, fileName } = splitPath(relPath)
+    const physical = toPhysicalRelPath(relPath)
+    const { dirPath, fileName } = splitPath(physical)
     const dirHandle = await this._ensureDir(dirPath)
     const fh = await dirHandle.getFileHandle(fileName, { create: true })
     const writable = await fh.createWritable()
@@ -196,21 +220,32 @@ export class PhotoFsRepo {
     if (!this.rootHandle) return
     const ok = await this._ensurePermission(this.rootHandle, true, true)
     if (!ok) throw new Error('无权限删除源文件')
-    const { dirPath, fileName } = splitPath(relPath)
-    let cur = this.rootHandle
-    if (dirPath) {
-      for (const part of dirPath.split('/').filter(Boolean)) {
-        try {
-          cur = await cur.getDirectoryHandle(part, { create: false })
-        } catch {
-          return
+    const physical = toPhysicalRelPath(relPath)
+
+    const doRemove = async (targetRelPath: string): Promise<boolean> => {
+      const { dirPath, fileName } = splitPath(targetRelPath)
+      let cur = this.rootHandle!
+      if (dirPath) {
+        for (const part of dirPath.split('/').filter(Boolean)) {
+          try {
+            cur = await cur.getDirectoryHandle(part, { create: false })
+          } catch {
+            return false
+          }
         }
       }
+      try {
+        await cur.removeEntry(fileName)
+        return true
+      } catch {
+        return false
+      }
     }
-    try {
-      await cur.removeEntry(fileName)
-    } catch {
-      // 不存在则忽略
+
+    // Prefer new physical path under dataRoot/app/, fallback to legacy root path.
+    const removed = await doRemove(physical)
+    if (!removed && physical !== relPath && (relPath.startsWith('library/') || relPath.startsWith('thumbs/'))) {
+      await doRemove(relPath)
     }
   }
 
@@ -227,9 +262,15 @@ export class PhotoFsRepo {
     if (!this.rootHandle) return []
     let lib: FileSystemDirectoryHandle
     try {
-      lib = await this.rootHandle.getDirectoryHandle('library', { create: false })
+      const appDir = await this.rootHandle.getDirectoryHandle(PHOTO_APP_DIR, { create: false })
+      lib = await appDir.getDirectoryHandle('library', { create: false })
     } catch {
-      return []
+      // Backward compatibility: legacy data was stored directly at dataRoot/
+      try {
+        lib = await this.rootHandle.getDirectoryHandle('library', { create: false })
+      } catch {
+        return []
+      }
     }
     const list = await this._collectLibraryImageEntries(lib, '')
     const images: PhotoImage[] = []
@@ -294,23 +335,36 @@ export class PhotoFsRepo {
   }
 
   private async _tryGetFileReadOnly(relPath: string): Promise<FileSystemFileHandle | null> {
-    const { dirPath, fileName } = splitPath(relPath)
-    let cur = this.rootHandle
-    if (!cur) return null
-    if (dirPath) {
-      for (const part of dirPath.split('/').filter(Boolean)) {
-        try {
-          cur = await cur.getDirectoryHandle(part, { create: false })
-        } catch {
-          return null
+    const tryGet = async (targetRelPath: string): Promise<FileSystemFileHandle | null> => {
+      const { dirPath, fileName } = splitPath(targetRelPath)
+      let cur = this.rootHandle
+      if (!cur) return null
+      if (dirPath) {
+        for (const part of dirPath.split('/').filter(Boolean)) {
+          try {
+            cur = await cur.getDirectoryHandle(part, { create: false })
+          } catch {
+            return null
+          }
         }
       }
+      try {
+        return await cur.getFileHandle(fileName, { create: false })
+      } catch {
+        return null
+      }
     }
-    try {
-      return await cur.getFileHandle(fileName, { create: false })
-    } catch {
-      return null
+
+    const physical = toPhysicalRelPath(relPath)
+    const primary = await tryGet(physical)
+    if (primary) return primary
+    if (
+      physical !== relPath &&
+      (relPath.startsWith('library/') || relPath.startsWith('thumbs/'))
+    ) {
+      return tryGet(relPath)
     }
+    return null
   }
 
   /**
@@ -354,9 +408,24 @@ export class PhotoFsRepo {
   }
 
   private async _getFileHandle(relPath: string): Promise<FileSystemFileHandle> {
-    const { dirPath, fileName } = splitPath(relPath)
+    const physical = toPhysicalRelPath(relPath)
+    const { dirPath, fileName } = splitPath(physical)
     const dir = dirPath ? await this._ensureDir(dirPath) : this.rootHandle!
-    return await dir.getFileHandle(fileName, { create: false })
+    try {
+      return await dir.getFileHandle(fileName, { create: false })
+    } catch (e) {
+      // If new physical path doesn't exist (legacy data), fallback to legacy root path.
+      if (
+        (e as { name?: string })?.name === 'NotFoundError' &&
+        physical !== relPath &&
+        (relPath.startsWith('library/') || relPath.startsWith('thumbs/'))
+      ) {
+        const { dirPath: legacyDirPath, fileName: legacyFileName } = splitPath(relPath)
+        const legacyDir = legacyDirPath ? await this._ensureDir(legacyDirPath) : this.rootHandle!
+        return await legacyDir.getFileHandle(legacyFileName, { create: false })
+      }
+      throw e
+    }
   }
 
   private async _ensureDir(relDirPath: string): Promise<FileSystemDirectoryHandle> {

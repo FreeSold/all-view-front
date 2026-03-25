@@ -207,9 +207,9 @@ export function usePhotoState() {
            */
           const { index: loadedIndex, tags: loadedTags } = await repo.loadAll()
           await applyLoadedIndexAndTags(loadedIndex, loadedTags)
-          log('已从数据目录同步 app-data.json，已加载图片索引。')
+          log('已从数据目录同步应用数据，已加载图片索引。')
         } else {
-          log('已从数据目录加载 app-data.json，正在刷新页面以同步作品库…')
+          log('已从数据目录加载应用数据，正在刷新页面以同步作品库…')
           window.location.reload()
         }
         return

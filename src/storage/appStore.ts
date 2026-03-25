@@ -9,6 +9,7 @@ import {
   getRoot,
   readAppData,
   removeKnownJsonFromDataDir,
+  removeAppDataDirFromDataDir,
   removeLibraryAndThumbsFromDataDir,
   writeAppData,
 } from './appRoot'
@@ -106,8 +107,26 @@ function getDefaultData(): AppData {
       { id: 'r_operator', name: '运营', code: 'operator', description: '部分功能可见（Demo）', createdAt: now() },
     ],
     accounts: [
-      { id: 'u_admin', username: 'admin', displayName: '系统管理员', roleId: 'r_admin', status: 'active', createdAt: now() },
-      { id: 'u_operator', username: 'operator', displayName: '运营同学', roleId: 'r_operator', status: 'active', createdAt: now() },
+      {
+        id: 'u_admin',
+        username: 'admin',
+        displayName: '系统管理员',
+        roleId: 'r_admin',
+        status: 'active',
+        // Demo password (kept as plain text for local demo).
+        password: 'admin@123',
+        createdAt: now(),
+      },
+      {
+        id: 'u_operator',
+        username: 'operator',
+        displayName: '运营同学',
+        roleId: 'r_operator',
+        status: 'active',
+        // Demo password (kept as plain text for local demo).
+        password: 'operator123',
+        createdAt: now(),
+      },
     ],
     videos,
     comics,
@@ -137,6 +156,15 @@ function parseData(raw: string): AppData | null {
     const data = JSON.parse(raw) as Partial<AppData>
     if (!data || !Array.isArray(data.roles) || !Array.isArray(data.accounts)) return null
     data.config = { ...defaultConfig, ...data.config }
+    // Backward compatibility for old data without password.
+    data.accounts = (data.accounts ?? []).map((a) => {
+      const acc = a as { username?: unknown; password?: unknown }
+      if (typeof acc.password === 'string') return a
+      const username = typeof acc.username === 'string' ? acc.username : ''
+      if (username.toLowerCase() === 'admin') return { ...a, password: 'admin@123' }
+      if (username.toLowerCase() === 'operator') return { ...a, password: 'operator123' }
+      return a
+    })
     if (!Array.isArray(data.videos)) data.videos = []
     if (!Array.isArray((data as Partial<AppData>).comics)) (data as Partial<AppData>).comics = []
     if (!(data as Partial<AppData>).mediaUi || typeof (data as Partial<AppData>).mediaUi !== 'object') {
@@ -371,6 +399,7 @@ export async function resetAllApplicationData(): Promise<void> {
   }
 
   await removeKnownJsonFromDataDir(true)
+  await removeAppDataDirFromDataDir(true)
   await removeLibraryAndThumbsFromDataDir(true)
   await clearPersistedRootHandle()
 

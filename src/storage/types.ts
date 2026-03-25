@@ -6,6 +6,8 @@ export type Account = {
   displayName: string
   roleId: string
   status: AccountStatus
+  /** 登录口令（Demo：明文存储，仅用于本地演示；真实场景建议改为 hash） */
+  password?: string
   createdAt: string
 }
 

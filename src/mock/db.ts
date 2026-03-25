@@ -17,8 +17,24 @@ const defaultRoles: Role[] = [
 ]
 
 const defaultAccounts: Account[] = [
-  { id: 'u_admin', username: 'admin', displayName: '系统管理员', roleId: 'r_admin', status: 'active', createdAt: nowIso() },
-  { id: 'u_operator', username: 'operator', displayName: '运营同学', roleId: 'r_operator', status: 'active', createdAt: nowIso() },
+  {
+    id: 'u_admin',
+    username: 'admin',
+    displayName: '系统管理员',
+    roleId: 'r_admin',
+    status: 'active',
+    password: 'admin@123',
+    createdAt: nowIso(),
+  },
+  {
+    id: 'u_operator',
+    username: 'operator',
+    displayName: '运营同学',
+    roleId: 'r_operator',
+    status: 'active',
+    password: 'operator123',
+    createdAt: nowIso(),
+  },
 ]
 
 export const mockDb = {
@@ -60,6 +76,7 @@ export const mockDb = {
   createAccount(input: Omit<Account, 'id' | 'createdAt'>): Account {
     const normalized = input.username.trim().toLowerCase()
     if (!normalized) throw new Error('账号不能为空')
+    if (!input.password) throw new Error('密码不能为空')
     const { accounts } = getAppData()
     if (accounts.some((a) => a.username === normalized)) throw new Error('账号已存在')
     const acc: Account = { ...input, username: normalized, id: uid('u'), createdAt: nowIso() }

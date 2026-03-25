@@ -8,6 +8,7 @@ type AccountFormValues = {
   displayName: string
   roleId: string
   status: AccountStatus
+  password?: string
 }
 
 export function AccountManagementPage() {
@@ -47,6 +48,7 @@ export function AccountManagementPage() {
               displayName: '',
               roleId: roles[0]?.id || 'r_operator',
               status: 'active',
+              password: '',
             })
             setOpen(true)
           }}
@@ -92,6 +94,7 @@ export function AccountManagementPage() {
                       displayName: record.displayName,
                       roleId: record.roleId,
                       status: record.status,
+                      password: '',
                     })
                     setOpen(true)
                   }}
@@ -135,10 +138,17 @@ export function AccountManagementPage() {
           try {
             const values = await form.validateFields()
             if (editing) {
-              mockDb.updateAccount(editing.id, values)
+              const { password, ...rest } = values
+              const patch: Partial<Omit<Account, 'id' | 'createdAt'>> = { ...rest }
+              if (typeof password === 'string' && password.trim()) {
+                patch.password = password.trim()
+              }
+              mockDb.updateAccount(editing.id, patch)
               message.success('已保存')
             } else {
-              mockDb.createAccount(values)
+              const { password, ...rest } = values
+              if (!password?.trim()) throw new Error('请输入密码')
+              mockDb.createAccount({ ...rest, password: password.trim() })
               message.success('已创建')
             }
             setRows(mockDb.listAccounts())
@@ -173,6 +183,9 @@ export function AccountManagementPage() {
                 { label: '禁用', value: 'disabled' },
               ]}
             />
+          </Form.Item>
+          <Form.Item label="密码" name="password">
+            <Input.Password placeholder={editing ? '不填则保留原密码' : '请输入登录密码（Demo：明文）'} />
           </Form.Item>
         </Form>
       </Modal>

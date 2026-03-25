@@ -27,13 +27,13 @@ export function DataDirButton({ onAfterPick, dirName }: DataDirButtonProps = {})
       const merged = await mergeAppDataFromDataDirAfterPick()
       const ok = await migrateToDataDir()
       if (merged && ok) {
-        message.success('已选择数据目录，已加载 app-data.json 并同步到本地，即将刷新页面')
+        message.success('已选择数据目录，已加载应用数据并同步到本地，即将刷新页面')
         onAfterPick?.()
         window.location.reload()
         return
       }
       if (merged) {
-        message.success('已加载文件夹中的 app-data.json，即将刷新页面')
+        message.success('已加载文件夹中的应用数据，即将刷新页面')
         onAfterPick?.()
         window.location.reload()
         return
@@ -42,7 +42,7 @@ export function DataDirButton({ onAfterPick, dirName }: DataDirButtonProps = {})
         message.success('已选择数据目录，当前数据已写入文件夹')
         onAfterPick?.()
       } else {
-        message.warning('选择成功，但写入 app-data.json 失败')
+        message.warning('选择成功，但写入应用数据失败')
         onAfterPick?.()
       }
     } catch (e) {

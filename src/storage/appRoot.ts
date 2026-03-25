@@ -9,10 +9,32 @@
 import { idbDelete, idbGet, idbSet } from './photoIdb'
 
 const IDB_KEY = 'photoManagerRootHandle'
+// Legacy: kept for backward compatibility (read-only).
 const FILE_APP_DATA = 'app-data.json'
+// New unified "multi-file" format (written by this project).
+// To reduce clutter, application JSON files are stored in a sub-folder under the data root.
+const APP_DATA_DIR = 'app'
+const FILE_ROLES = 'roles.json'
+const FILE_ACCOUNTS = 'accounts.json'
+const FILE_VIDEOS = 'videos.json'
+const FILE_COMICS = 'comics.json'
+const FILE_CONFIG = 'config.json'
+const FILE_MEDIA_UI = 'media-ui.json'
 
 /** 数据目录根下由本应用写入的 JSON（清除保存数据时一并删除） */
-const KNOWN_JSON_FILES = ['app-data.json', 'index.json', 'tags.json'] as const
+const KNOWN_JSON_FILES = [
+  FILE_APP_DATA,
+  'index.json',
+  'tags.json',
+] as const
+
+async function getAppDataDirHandle(
+  root: FileSystemDirectoryHandle,
+  create: boolean,
+): Promise<FileSystemDirectoryHandle> {
+  // The caller should already hold read/write permission for the root.
+  return await root.getDirectoryHandle(APP_DATA_DIR, { create })
+}
 
 /** 清除数据时递归删除的子目录（图片库与缩略图） */
 const MANAGED_SUBDIRS = ['library', 'thumbs'] as const
@@ -47,7 +69,9 @@ export function isElectronShell(): boolean {
   return typeof window !== 'undefined' && !!window.electronAPI
 }
 
-const RESERVED_NAMES = ['library', 'thumbs']
+// If user picks a sub-folder as "data root", internal paths would become app/app/... for new format.
+// Reserve both legacy folders and the new "app/" folder to force selecting the parent directory.
+const RESERVED_NAMES = ['library', 'thumbs', 'app']
 
 /**
  * 检查目录权限。allowRequest=false 时绝不调用 requestPermission（避免无手势 SecurityError）。
@@ -153,6 +177,19 @@ export async function removeLibraryAndThumbsFromDataDir(allowRequest: boolean): 
   }
 }
 
+/** 清除应用数据子文件夹（包含 roles/accounts/videos/comics/config/media-ui 等） */
+export async function removeAppDataDirFromDataDir(allowRequest: boolean): Promise<void> {
+  const root = await getRoot()
+  if (!root) return
+  const ok = await ensureDirectoryPermission(root, true, allowRequest)
+  if (!ok) return
+  try {
+    await root.removeEntry(APP_DATA_DIR, { recursive: true })
+  } catch {
+    // ignore
+  }
+}
+
 /** 清除 IndexedDB 中保存的目录句柄并重置内存缓存（「未选择目录」状态） */
 export async function clearPersistedRootHandle(): Promise<void> {
   await idbDelete(IDB_KEY)
@@ -166,9 +203,57 @@ export async function readAppData(allowRequest = false): Promise<string | null> 
   const ok = await ensureDirectoryPermission(root, true, allowRequest)
   if (!ok) return null
   try {
-    const fh = await root.getFileHandle(FILE_APP_DATA, { create: false })
-    const file = await fh.getFile()
-    return await file.text()
+    // 1) Try legacy unified file first.
+    try {
+      const fh = await root.getFileHandle(FILE_APP_DATA, { create: false })
+      const file = await fh.getFile()
+      return await file.text()
+    } catch (e) {
+      if ((e as { name?: string })?.name !== 'NotFoundError') throw e
+    }
+
+    // 2) Multi-file format (stored under APP_DATA_DIR).
+    const readText = async (fileName: string): Promise<string | null> => {
+      try {
+        const appDir = await getAppDataDirHandle(root, false)
+        const fh = await appDir.getFileHandle(fileName, { create: false })
+        const file = await fh.getFile()
+        return await file.text()
+      } catch (e) {
+        // Backward compatible: earlier versions wrote these JSON directly under root.
+        if ((e as { name?: string })?.name === 'NotFoundError') {
+          try {
+            const fh = await root.getFileHandle(fileName, { create: false })
+            const file = await fh.getFile()
+            return await file.text()
+          } catch (e2) {
+            if ((e2 as { name?: string })?.name === 'NotFoundError') return null
+            throw e2
+          }
+        }
+        throw e
+      }
+    }
+
+    const rolesRaw = await readText(FILE_ROLES)
+    const accountsRaw = await readText(FILE_ACCOUNTS)
+    const videosRaw = await readText(FILE_VIDEOS)
+    const comicsRaw = await readText(FILE_COMICS)
+    const configRaw = await readText(FILE_CONFIG)
+    if (!rolesRaw || !accountsRaw || !videosRaw || !comicsRaw || !configRaw) return null
+
+    const mediaUiRaw = await readText(FILE_MEDIA_UI)
+
+    const assembled = {
+      roles: JSON.parse(rolesRaw),
+      accounts: JSON.parse(accountsRaw),
+      videos: JSON.parse(videosRaw),
+      comics: JSON.parse(comicsRaw),
+      config: JSON.parse(configRaw),
+      mediaUi: mediaUiRaw ? JSON.parse(mediaUiRaw) : {},
+    }
+
+    return JSON.stringify(assembled)
   } catch (e) {
     if ((e as { name?: string })?.name === 'NotFoundError') return null
     throw e
@@ -181,11 +266,31 @@ export async function writeAppData(json: string, allowRequest = false): Promise<
   if (!root) throw new Error('未选择数据目录')
   const ok = await ensureDirectoryPermission(root, true, allowRequest)
   if (!ok) throw new Error('没有目录读写权限')
-  const fh = await root.getFileHandle(FILE_APP_DATA, { create: true })
-  const writable = await fh.createWritable()
-  try {
-    await writable.write(new Blob([json], { type: 'application/json' }))
-  } finally {
-    await writable.close()
+  const data = JSON.parse(json) as {
+    roles?: unknown
+    accounts?: unknown
+    videos?: unknown
+    comics?: unknown
+    config?: unknown
+    mediaUi?: unknown
   }
+
+  const appDir = await getAppDataDirHandle(root, true)
+
+  const writeJson = async (fileName: string, value: unknown): Promise<void> => {
+    const fh = await appDir.getFileHandle(fileName, { create: true })
+    const writable = await fh.createWritable()
+    try {
+      await writable.write(new Blob([JSON.stringify(value)], { type: 'application/json' }))
+    } finally {
+      await writable.close()
+    }
+  }
+
+  await writeJson(FILE_ROLES, data.roles ?? [])
+  await writeJson(FILE_ACCOUNTS, data.accounts ?? [])
+  await writeJson(FILE_VIDEOS, data.videos ?? [])
+  await writeJson(FILE_COMICS, data.comics ?? [])
+  await writeJson(FILE_CONFIG, data.config ?? {})
+  await writeJson(FILE_MEDIA_UI, data.mediaUi ?? {})
 }

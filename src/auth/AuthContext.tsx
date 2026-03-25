@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useMemo, useState } from 'react'
+import { getAppData } from '../storage/appStore'
 
 export type UserRole = 'admin' | 'operator'
 
@@ -35,15 +36,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user,
       login: async ({ username, password }) => {
         const normalized = username.trim().toLowerCase()
-        const ok =
-          (normalized === 'admin' && password === 'admin@123') ||
-          (normalized === 'operator' && password === 'operator123')
-
-        if (!ok) {
-          throw new Error('账号或密码错误（Demo：admin/admin@123 或 operator/operator123）')
+        const { accounts, roles } = getAppData()
+        const acc = accounts.find((a) => a.username === normalized && a.status === 'active')
+        if (!acc) {
+          throw new Error('账号不存在或未启用')
+        }
+        if (!acc.password) {
+          throw new Error('该账号未设置密码')
+        }
+        if (acc.password !== password) {
+          throw new Error('账号或密码错误')
         }
 
-        const role: UserRole = normalized === 'admin' ? 'admin' : 'operator'
+        const roleCode = roles.find((r) => r.id === acc.roleId)?.code
+        if (roleCode !== 'admin' && roleCode !== 'operator') {
+          throw new Error('账号角色配置异常')
+        }
+
+        const role: UserRole = roleCode
         const next: AuthUser = { username: normalized, role }
         localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
         setUser(next)
