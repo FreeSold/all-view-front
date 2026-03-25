@@ -7,4 +7,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   playVideo: (playerPath, videoPath) => ipcRenderer.invoke('play-video', playerPath, videoPath),
   storageRead: () => ipcRenderer.invoke('storage-read'),
   storageWrite: (data) => ipcRenderer.invoke('storage-write', data),
+  storageDelete: () => ipcRenderer.invoke('storage-delete'),
 })

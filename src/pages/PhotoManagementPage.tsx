@@ -1,4 +1,4 @@
-import { CaretDownOutlined, CaretUpOutlined, InboxOutlined, PictureOutlined } from '@ant-design/icons'
+import { CaretDownOutlined, CaretUpOutlined, ExportOutlined, InboxOutlined, PictureOutlined } from '@ant-design/icons'
 import {
   Alert,
   Button,
@@ -27,6 +27,10 @@ import { useAppShell } from '../context/AppShellContext'
 import { usePhotoFolder } from '../context/PhotoFolderContext'
 import { usePhotoStateContext } from '../context/PhotoStateContext'
 import { PhotoPageToolbar } from './PhotoManagement/PhotoPageToolbar'
+import { buildPhotoExportTasks } from '../export/photoExport'
+import { buildPhotoExportFolderName } from '../export/photoExportLabel'
+import { exportFileTasksToUserFolder, isFsDirectoryPickerSupported } from '../export/fsExportCore'
+import type { PhotoImportPickItem } from '../storage/photoFsRepo'
 import type { PhotoImage } from '../storage/photoTypes'
 
 type PhotoListFilterField = 'name' | 'id' | 'path' | 'tags' | 'ext'
@@ -191,6 +195,7 @@ export default function PhotoManagementPage() {
     removeUserTag,
     getTagSuggestions,
     importFiles,
+    removeImagesByIds,
     isSupported,
     repo,
   } = usePhotoStateContext()
@@ -206,8 +211,11 @@ export default function PhotoManagementPage() {
   const [filterPanelExpanded, setFilterPanelExpanded] = useState(false)
 
   const [importOpen, setImportOpen] = useState(false)
-  const [importFilesList, setImportFilesList] = useState<File[]>([])
+  const [importFilesList, setImportFilesList] = useState<PhotoImportPickItem[]>([])
   const [importing, setImporting] = useState(false)
+  const [selectedPhotoIds, setSelectedPhotoIds] = useState<string[]>([])
+  const [exportingSelected, setExportingSelected] = useState(false)
+  const [deletingSelected, setDeletingSelected] = useState(false)
   const [hoverPreview, setHoverPreview] = useState<{
     x: number
     y: number
@@ -334,6 +342,19 @@ export default function PhotoManagementPage() {
     if (listPage > listMaxPage) setListPage(listMaxPage)
   }, [listPage, listMaxPage])
 
+  const selectedFilteredPhotos = useMemo(() => {
+    if (!selectedPhotoIds.length) return []
+    const idSet = new Set(selectedPhotoIds)
+    return listFiltered.filter((x) => idSet.has(x.id))
+  }, [selectedPhotoIds, listFiltered])
+  const allCurrentPhotosSelected =
+    listFiltered.length > 0 && selectedFilteredPhotos.length === listFiltered.length
+
+  useEffect(() => {
+    const valid = new Set(index.images.map((x) => x.id))
+    setSelectedPhotoIds((prev) => prev.filter((id) => valid.has(id)))
+  }, [index.images])
+
   const loadThumb = useCallback(
     async (relPath: string | undefined) => {
       if (!relPath || !fs.rootHandle) return ''
@@ -354,9 +375,9 @@ export default function PhotoManagementPage() {
     try {
       const files = await repo.pickImageFiles()
       setImportFilesList((prev) => {
-        const seen = new Set(prev.map((f: File) => `${f.name}:${f.size}:${f.lastModified}`))
+        const seen = new Set(prev.map((p) => `${p.file.name}:${p.file.size}:${p.file.lastModified}`))
         const added = files.filter(
-          (f: File) => !seen.has(`${f.name}:${f.size}:${f.lastModified}`)
+          (p) => !seen.has(`${p.file.name}:${p.file.size}:${p.file.lastModified}`)
         )
         return [...prev, ...added]
       })
@@ -370,9 +391,9 @@ export default function PhotoManagementPage() {
     try {
       const files = await repo.pickImageFolderRecursive()
       setImportFilesList((prev) => {
-        const seen = new Set(prev.map((f: File) => `${f.name}:${f.size}:${f.lastModified}`))
+        const seen = new Set(prev.map((p) => `${p.file.name}:${p.file.size}:${p.file.lastModified}`))
         const added = files.filter(
-          (f: File) => !seen.has(`${f.name}:${f.size}:${f.lastModified}`)
+          (p) => !seen.has(`${p.file.name}:${p.file.size}:${p.file.lastModified}`)
         )
         return [...prev, ...added]
       })
@@ -400,6 +421,64 @@ export default function PhotoManagementPage() {
     setImportFilesList([])
     setImportOpen(true)
   }, [])
+
+  const handleExportSelectedPhotos = useCallback(async () => {
+    if (!selectedFilteredPhotos.length) {
+      message.warning('请先选择要导出的图片')
+      return
+    }
+    if (!fs.rootHandle) {
+      message.warning('请先选择图片数据目录')
+      return
+    }
+    if (!isFsDirectoryPickerSupported()) {
+      message.info('请使用 Chrome 或 Edge，并允许选择保存文件夹')
+      return
+    }
+    setExportingSelected(true)
+    try {
+      const folderName = `${buildPhotoExportFolderName(derived, listKeyword, listFilterField)}_已选`
+      const tasks = buildPhotoExportTasks(selectedFilteredPhotos, repo, { move: false })
+      const result = await exportFileTasksToUserFolder(tasks, folderName)
+      if (result == null) return
+      if (result.ok === 0 && result.errors.length) {
+        message.error(result.errors[0] ?? '导出失败')
+        return
+      }
+      const parts = [`已导出已选 ${result.ok} 个文件到「${result.folderName}」`]
+      if (result.fail) parts.push(`失败 ${result.fail}`)
+      message.success(parts.join('；'))
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setExportingSelected(false)
+    }
+  }, [selectedFilteredPhotos, fs.rootHandle, derived, listKeyword, listFilterField, repo])
+
+  const handleDeleteSelectedPhotos = useCallback(() => {
+    if (!selectedFilteredPhotos.length) {
+      message.warning('请先选择要删除的图片')
+      return
+    }
+    Modal.confirm({
+      title: '确认删除已选图片？',
+      content: `将从管理索引删除 ${selectedFilteredPhotos.length} 条记录（不删除原始文件）。`,
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        setDeletingSelected(true)
+        try {
+          const idSet = new Set(selectedFilteredPhotos.map((x) => x.id))
+          removeImagesByIds(Array.from(idSet))
+          setSelectedPhotoIds((prev) => prev.filter((id) => !idSet.has(id)))
+          message.success(`已删除 ${selectedFilteredPhotos.length} 条记录`)
+        } finally {
+          setDeletingSelected(false)
+        }
+      },
+    })
+  }, [selectedFilteredPhotos, removeImagesByIds])
 
   useLayoutEffect(() => {
     if (!isSupported) {
@@ -492,6 +571,34 @@ export default function PhotoManagementPage() {
 
   const resultsCardExtra = (
     <Space size={4} wrap style={{ justifyContent: 'flex-end' }}>
+      <Button
+        size="small"
+        type={allCurrentPhotosSelected ? 'primary' : 'default'}
+        onClick={() =>
+          setSelectedPhotoIds(() => (allCurrentPhotosSelected ? [] : listFiltered.map((x) => x.id)))
+        }
+        disabled={!listFiltered.length}
+      >
+        全选
+      </Button>
+      <Button
+        size="small"
+        icon={<ExportOutlined />}
+        loading={exportingSelected}
+        disabled={!selectedFilteredPhotos.length}
+        onClick={() => void handleExportSelectedPhotos()}
+      >
+        导出已选
+      </Button>
+      <Button
+        size="small"
+        danger
+        loading={deletingSelected}
+        disabled={!selectedFilteredPhotos.length}
+        onClick={handleDeleteSelectedPhotos}
+      >
+        删除已选
+      </Button>
       {effectiveViewMode === 'list' ? (
         <Select
           size="small"
@@ -756,7 +863,7 @@ export default function PhotoManagementPage() {
 
       <Card
         size="small"
-        title={`${listFiltered.length} 张`}
+        title={`${listFiltered.length} 张${selectedFilteredPhotos.length ? ` · 已选 ${selectedFilteredPhotos.length}` : ''}`}
         extra={resultsCardExtra}
         style={{ flex: 1, minHeight: 0 }}
         styles={{
@@ -788,12 +895,12 @@ export default function PhotoManagementPage() {
                   }}
                   renderItem={(img: (typeof derived.results)[0]) => (
                     <List.Item
-                      onMouseEnter={() => {
+                      onMouseEnter={(e) => {
                         loadThumb(img.thumbRelPath).then((url) => {
                           if (url)
                             setHoverPreview({
-                              x: 0,
-                              y: 0,
+                              x: e.clientX + 16,
+                              y: e.clientY + 16,
                               thumbUrl: url,
                               meta: `${img.displayName}\n${img.libraryRelPath}`,
                             })
@@ -803,12 +910,25 @@ export default function PhotoManagementPage() {
                     >
                       <List.Item.Meta
                         avatar={
-                          <ThumbImage
-                            img={img}
-                            size={48}
-                            loadThumb={loadThumb}
-                            onOpen={() => void openLargePreview(img)}
-                          />
+                          <div className="media-select-host" style={{ width: 48, height: 48 }}>
+                            <ThumbImage
+                              img={img}
+                              size={48}
+                              loadThumb={loadThumb}
+                              onOpen={() => void openLargePreview(img)}
+                            />
+                            <div
+                              role="button"
+                              aria-label={selectedPhotoIds.includes(img.id) ? '取消选择' : '选择图片'}
+                              className={`media-select-dot ${selectedPhotoIds.includes(img.id) ? 'is-selected' : ''}`}
+                              onClick={(ev) => {
+                                ev.stopPropagation()
+                                setSelectedPhotoIds((prev) =>
+                                  prev.includes(img.id) ? prev.filter((id) => id !== img.id) : [...prev, img.id],
+                                )
+                              }}
+                            />
+                          </div>
                         }
                         title={<PhotoTitleRow img={img} />}
                         description={
@@ -836,13 +956,39 @@ export default function PhotoManagementPage() {
                       <Card
                         size="small"
                         hoverable
+                        onMouseEnter={(e) => {
+                          loadThumb(img.thumbRelPath).then((url) => {
+                            if (url) {
+                              setHoverPreview({
+                                x: e.clientX + 16,
+                                y: e.clientY + 16,
+                                thumbUrl: url,
+                                meta: `${img.displayName}\n${img.libraryRelPath}`,
+                              })
+                            }
+                          })
+                        }}
+                        onMouseLeave={() => setHoverPreview(null)}
                         cover={
-                          <ThumbImage
-                            img={img}
-                            size={160}
-                            loadThumb={loadThumb}
-                            onOpen={() => void openLargePreview(img)}
-                          />
+                          <div className="media-select-host">
+                            <ThumbImage
+                              img={img}
+                              size={160}
+                              loadThumb={loadThumb}
+                              onOpen={() => void openLargePreview(img)}
+                            />
+                            <div
+                              role="button"
+                              aria-label={selectedPhotoIds.includes(img.id) ? '取消选择' : '选择图片'}
+                              className={`media-select-dot ${selectedPhotoIds.includes(img.id) ? 'is-selected' : ''}`}
+                              onClick={(ev) => {
+                                ev.stopPropagation()
+                                setSelectedPhotoIds((prev) =>
+                                  prev.includes(img.id) ? prev.filter((id) => id !== img.id) : [...prev, img.id],
+                                )
+                              }}
+                            />
+                          </div>
                         }
                         actions={[]}
                       >
@@ -976,9 +1122,9 @@ export default function PhotoManagementPage() {
               <List
                 size="small"
                 dataSource={importFilesList.slice(0, 100)}
-                renderItem={(f: File) => (
+                renderItem={(p: PhotoImportPickItem) => (
                   <List.Item>
-                    {f.name} — {formatBytes(f.size)}
+                    {p.file.name} — {formatBytes(p.file.size)}
                   </List.Item>
                 )}
               />

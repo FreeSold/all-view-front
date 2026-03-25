@@ -1,7 +1,9 @@
 {
   "name": "all-view-front",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "All Play 后台管理系统（Vite + React + Electron）",
+  "author": "All View",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -10,7 +12,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "dev:electron": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
-    "build:exe": "npm run build && electron-builder"
+    "build:exe": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable --x64",
+    "build:win-dir": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win dir --x64"
   },
   "dependencies": {
     "@ant-design/icons": "^6.1.0",
@@ -30,6 +33,9 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
+    "electron": "^34.2.0",
+    "electron-builder": "^25.1.8",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
@@ -47,12 +53,24 @@
     },
     "files": [
       "dist/**",
-      "electron/**"
+      "electron/**",
+      "package.json"
     ],
+    "asar": true,
+    "forceCodeSigning": false,
+    "compression": "store",
     "win": {
+      "signDlls": false,
+      "signAndEditExecutable": false,
       "target": [
-        "nsis"
-      ]
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-portable.${ext}"
     }
   }
 }

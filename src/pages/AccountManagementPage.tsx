@@ -1,5 +1,5 @@
 import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
-import { Button, Form, Input, Modal, Select, Space, Table, Tag, Typography, message } from 'antd'
+import { App, Button, Form, Input, Modal, Select, Space, Table, Tag, Typography } from 'antd'
 import { useMemo, useState } from 'react'
 import { mockDb, type Account, type AccountStatus } from '../mock/db'
 
@@ -11,7 +11,7 @@ type AccountFormValues = {
 }
 
 export function AccountManagementPage() {
-  const [msgApi, contextHolder] = message.useMessage()
+  const { message } = App.useApp()
   const roles = mockDb.listRoles()
   const [rows, setRows] = useState<Account[]>(() => mockDb.listAccounts())
   const [open, setOpen] = useState(false)
@@ -30,7 +30,6 @@ export function AccountManagementPage() {
 
   return (
     <div>
-      {contextHolder}
       <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 12 }}>
         <div>
           <Typography.Title level={4} style={{ margin: 0 }}>
@@ -113,7 +112,7 @@ export function AccountManagementPage() {
                       onOk: () => {
                         mockDb.deleteAccount(record.id)
                         setRows(mockDb.listAccounts())
-                        msgApi.success('已删除')
+                        message.success('已删除')
                       },
                     })
                   }}
@@ -137,15 +136,15 @@ export function AccountManagementPage() {
             const values = await form.validateFields()
             if (editing) {
               mockDb.updateAccount(editing.id, values)
-              msgApi.success('已保存')
+              message.success('已保存')
             } else {
               mockDb.createAccount(values)
-              msgApi.success('已创建')
+              message.success('已创建')
             }
             setRows(mockDb.listAccounts())
             setOpen(false)
           } catch (e) {
-            if (e instanceof Error) msgApi.error(e.message)
+            if (e instanceof Error) message.error(e.message)
           }
         }}
       >

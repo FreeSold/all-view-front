@@ -68,6 +68,48 @@ export async function saveLocalVideoHandle(
   })
 }
 
+/** 根据 local-handle:sourceId 读取原始 File（用于图片导出等） */
+export async function getFileFromLocalHandleRef(ref: string): Promise<File | null> {
+  const prefix = 'local-handle:'
+  if (!ref.startsWith(prefix)) return null
+  const sourceId = ref.slice(prefix.length)
+  if (!sourceId) return null
+
+  const db = await openDB()
+  return new Promise((resolve) => {
+    const tx = db.transaction(STORE_NAME, 'readonly')
+    const store = tx.objectStore(STORE_NAME)
+    const req = store.get(sourceId)
+    req.onsuccess = async () => {
+      db.close()
+      const stored = req.result
+      const handle = stored as FileSystemFileHandle | undefined
+      if (handle && typeof handle.getFile === 'function') {
+        try {
+          const opts = { mode: 'read' as const }
+          if (handle.requestPermission) {
+            const perm = await handle.requestPermission(opts)
+            if (perm !== 'granted') {
+              resolve(null)
+              return
+            }
+          }
+          const file = await handle.getFile()
+          resolve(file)
+        } catch {
+          resolve(null)
+        }
+      } else {
+        resolve(null)
+      }
+    }
+    req.onerror = () => {
+      db.close()
+      resolve(null)
+    }
+  })
+}
+
 /** 根据 local-handle:sourceId 解析为可播放的 blob URL（按需读取文件） */
 export async function resolveLocalHandleUrl(url: string): Promise<string | null> {
   const prefix = 'local-handle:'
@@ -106,6 +148,23 @@ export async function resolveLocalHandleUrl(url: string): Promise<string | null>
     req.onerror = () => {
       db.close()
       resolve(null)
+    }
+  })
+}
+
+/** 清空所有已保存的本地视频文件句柄（清除应用数据时调用） */
+export async function clearAllLocalVideoHandles(): Promise<void> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+    tx.objectStore(STORE_NAME).clear()
+    tx.oncomplete = () => {
+      db.close()
+      resolve()
+    }
+    tx.onerror = () => {
+      db.close()
+      reject(tx.error)
     }
   })
 }

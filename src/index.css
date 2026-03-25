@@ -58,3 +58,89 @@ body {
     width 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
     background-color 160ms ease;
 }
+
+/* Media cards/list selection dot: hidden by default, fade in on hover; selected fills from center. */
+.media-select-host {
+  position: relative;
+}
+
+.media-select-dot {
+  --select-accent-core: #1677ff;
+  --select-accent-edge: #69b1ff;
+  --dot-size: 10px;
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  width: var(--dot-size);
+  height: var(--dot-size);
+  border-radius: 50%;
+  border: 1px solid rgba(154, 154, 154, 0.5);
+  background: rgba(154, 154, 154, 0.5);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 180ms ease, transform 140ms ease;
+  z-index: 5;
+}
+
+.media-select-dot::before {
+  content: '';
+  position: absolute;
+  left: -2px;
+  top: -2px;
+  right: -10px;
+  bottom: -10px;
+  background: transparent;
+}
+
+.media-select-host:hover .media-select-dot,
+.media-select-dot.is-selected {
+  opacity: 1;
+}
+
+.media-select-dot:hover {
+  transform: scale(1.06);
+}
+
+.media-select-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at center,
+    var(--select-accent-core) 0%,
+    var(--select-accent-core) 28%,
+    var(--select-accent-edge) 100%
+  );
+  transform: scale(0);
+  transform-origin: center center;
+  transition: transform 190ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.media-select-dot.is-selected::after {
+  transform: scale(1);
+}
+
+:root[data-theme-mode='dark'] .media-select-dot {
+  --select-accent-core: #e07c24;
+  --select-accent-edge: #f6ad55;
+}
+
+/* Photo thumbs: add subtle hover darkening like video/comic cards. */
+.photo-thumb-surface {
+  position: relative;
+}
+
+.photo-thumb-surface::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.2);
+  opacity: 0;
+  transition: opacity 180ms ease;
+  pointer-events: none;
+}
+
+.photo-thumb-surface:hover::after {
+  opacity: 1;
+}

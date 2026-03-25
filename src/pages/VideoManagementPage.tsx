@@ -1,6 +1,7 @@
 import {
   DeleteFilled,
   EditOutlined,
+  ExportOutlined,
   EyeFilled,
   PlayCircleFilled,
   PlusOutlined,
@@ -37,6 +38,9 @@ import { CoverCropModal } from '../components/CoverCropModal'
 import { MediaAppToolbar } from '../components/MediaAppToolbar'
 import { MediaFilterSortCard, MediaResultsCard } from '../components/media/MediaLibraryChrome'
 import { useAppShell } from '../context/AppShellContext'
+import { buildMediaLibraryExportFolderName } from '../export/mediaExportLabel'
+import { exportFileTasksToUserFolder, isFsDirectoryPickerSupported } from '../export/fsExportCore'
+import { buildWorkMediaExportTasks } from '../export/workMediaExport'
 import {
   collectCategories,
   collectTags,
@@ -127,16 +131,51 @@ function ResizeableTitle(props: ResizeableTitleProps) {
   )
 }
 
-function CoverCell({ coverUrl, coverOriginalUrl, name }: { coverUrl: string; coverOriginalUrl?: string; name: string }) {
+function CoverCell({
+  coverUrl,
+  coverOriginalUrl,
+  name,
+  selected,
+  onToggleSelect,
+}: {
+  coverUrl: string
+  coverOriginalUrl?: string
+  name: string
+  selected?: boolean
+  onToggleSelect?: () => void
+}) {
   return (
-    <Image
-      src={coverUrl}
-      alt={name}
-      width={56}
-      height={78}
-      style={{ objectFit: 'cover', borderRadius: 6, cursor: 'pointer' }}
-      preview={{ mask: '点击放大', src: coverOriginalUrl || coverUrl }}
-    />
+    <div className="media-select-host" style={{ width: 56, height: 78 }}>
+      <Tooltip
+        title={
+          <img
+            src={coverOriginalUrl || coverUrl}
+            alt={name}
+            style={{ width: 300, height: 300, objectFit: 'contain', background: '#111' }}
+          />
+        }
+      >
+        <Image
+          src={coverUrl}
+          alt={name}
+          width={56}
+          height={78}
+          style={{ objectFit: 'cover', borderRadius: 6, cursor: 'pointer' }}
+          preview={{ mask: '点击放大', src: coverOriginalUrl || coverUrl }}
+        />
+      </Tooltip>
+      {onToggleSelect ? (
+        <div
+          role="button"
+          aria-label={selected ? '取消选择' : '选择作品'}
+          className={`media-select-dot ${selected ? 'is-selected' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggleSelect()
+          }}
+        />
+      ) : null}
+    </div>
   )
 }
 
@@ -383,6 +422,8 @@ export function VideoManagementPage() {
   const [detailMode, setDetailMode] = useState<'create' | 'edit'>('edit')
   const [originalId, setOriginalId] = useState<string | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [exportSelectedLoading, setExportSelectedLoading] = useState(false)
 
   const videoUi = useMemo(
     () => mergeMediaUi(getAppData().mediaUi?.video),
@@ -498,6 +539,18 @@ export function VideoManagementPage() {
       videoUi.sortOrder ?? 'desc',
     )
   }, [videos, videoUi])
+  const selectedFilteredVideos = useMemo(() => {
+    if (!selectedIds.length) return []
+    const idSet = new Set(selectedIds)
+    return filtered.filter((v) => idSet.has(v.id))
+  }, [selectedIds, filtered])
+  const allCurrentVideosSelected =
+    filtered.length > 0 && selectedFilteredVideos.length === filtered.length
+
+  useEffect(() => {
+    const idSet = new Set(videos.map((v) => v.id))
+    setSelectedIds((prev) => prev.filter((id) => idSet.has(id)))
+  }, [videos])
 
   const hasPanelFilters = Boolean(
     (videoUi.categoryFilters ?? []).length ||
@@ -649,6 +702,62 @@ export function VideoManagementPage() {
       },
     })
   }, [])
+
+  const handleExportSelectedVideos = useCallback(async () => {
+    if (!selectedFilteredVideos.length) {
+      message.warning('请先选择要导出的作品')
+      return
+    }
+    if (!isFsDirectoryPickerSupported()) {
+      message.info('请使用 Chrome 或 Edge，并允许选择保存文件夹')
+      return
+    }
+    setExportSelectedLoading(true)
+    try {
+      const folderName = `${buildMediaLibraryExportFolderName(videoUi, 'video')}_已选`
+      const { tasks, skipMessages } = buildWorkMediaExportTasks(selectedFilteredVideos, isElectron)
+      if (!tasks.length) {
+        message.warning(skipMessages[0] ?? '没有可导出的文件')
+        return
+      }
+      const result = await exportFileTasksToUserFolder(tasks, folderName)
+      if (result == null) return
+      if (result.ok === 0 && result.errors.length) {
+        message.error(result.errors[0] ?? '导出失败')
+        return
+      }
+      const parts = [`已导出已选 ${result.ok} 个文件到「${result.folderName}」`]
+      if (result.fail) parts.push(`失败 ${result.fail}`)
+      message.success(parts.join('；'))
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setExportSelectedLoading(false)
+    }
+  }, [selectedFilteredVideos, videoUi, isElectron])
+
+  const handleDeleteSelectedVideos = useCallback(() => {
+    if (!selectedFilteredVideos.length) {
+      message.warning('请先选择要删除的作品')
+      return
+    }
+    Modal.confirm({
+      title: '确认删除已选作品？',
+      content: `将删除 ${selectedFilteredVideos.length} 条作品记录。`,
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: () => {
+        const idSet = new Set(selectedFilteredVideos.map((x) => x.id))
+        updateAppData((d) => {
+          d.videos = d.videos.filter((x) => !idSet.has(x.id))
+        })
+        setSelectedIds((prev) => prev.filter((id) => !idSet.has(id)))
+        setRefreshKey((k) => k + 1)
+        message.success(`已删除 ${selectedFilteredVideos.length} 条记录`)
+      },
+    })
+  }, [selectedFilteredVideos])
 
   const parseActors = useCallback((text: string): string[] => {
     return text
@@ -1020,7 +1129,15 @@ export function VideoManagementPage() {
         onResize: handleResize('cover'),
       }),
       render: (_: string, r) => (
-        <CoverCell coverUrl={r.coverUrl} coverOriginalUrl={r.coverOriginalUrl} name={r.name} />
+        <CoverCell
+          coverUrl={r.coverUrl}
+          coverOriginalUrl={r.coverOriginalUrl}
+          name={r.name}
+          selected={selectedIds.includes(r.id)}
+          onToggleSelect={() =>
+            setSelectedIds((prev) => (prev.includes(r.id) ? prev.filter((id) => id !== r.id) : [...prev, r.id]))
+          }
+        />
       ),
     },
     {
@@ -1283,9 +1400,29 @@ export function VideoManagementPage() {
       </MediaFilterSortCard>
 
       <MediaResultsCard
-        title={`${filtered.length} 部`}
+        title={`${filtered.length} 部${selectedFilteredVideos.length ? ` · 已选 ${selectedFilteredVideos.length}` : ''}`}
         extra={
           <Space wrap size={4} style={{ justifyContent: 'flex-end' }}>
+            <Button
+              size="small"
+              type={allCurrentVideosSelected ? 'primary' : 'default'}
+              disabled={!filtered.length}
+              onClick={() => setSelectedIds(() => (allCurrentVideosSelected ? [] : filtered.map((v) => v.id)))}
+            >
+              全选
+            </Button>
+            <Button
+              size="small"
+              icon={<ExportOutlined />}
+              loading={exportSelectedLoading}
+              disabled={!selectedFilteredVideos.length}
+              onClick={() => void handleExportSelectedVideos()}
+            >
+              导出已选
+            </Button>
+            <Button size="small" danger disabled={!selectedFilteredVideos.length} onClick={handleDeleteSelectedVideos}>
+              删除已选
+            </Button>
             {viewMode === 'list' ? (
               <Select
                 size="small"
@@ -1343,12 +1480,35 @@ export function VideoManagementPage() {
                     size="small"
                     hoverable
                     cover={
-                      <Image
-                        src={v.coverUrl}
-                        alt={v.name}
-                        style={{ height: 200, objectFit: 'cover' }}
-                        preview={{ mask: '放大' }}
-                      />
+                      <div className="media-select-host">
+                        <Tooltip
+                          title={
+                            <img
+                              src={v.coverOriginalUrl || v.coverUrl}
+                              alt={v.name}
+                              style={{ width: 300, height: 300, objectFit: 'contain', background: '#111' }}
+                            />
+                          }
+                        >
+                          <Image
+                            src={v.coverUrl}
+                            alt={v.name}
+                            style={{ height: 200, objectFit: 'cover' }}
+                            preview={{ mask: '放大' }}
+                          />
+                        </Tooltip>
+                        <div
+                          role="button"
+                          aria-label={selectedIds.includes(v.id) ? '取消选择' : '选择作品'}
+                          className={`media-select-dot ${selectedIds.includes(v.id) ? 'is-selected' : ''}`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setSelectedIds((prev) =>
+                              prev.includes(v.id) ? prev.filter((id) => id !== v.id) : [...prev, v.id],
+                            )
+                          }}
+                        />
+                      </div>
                     }
                   >
                     <Card.Meta

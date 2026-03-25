@@ -112,6 +112,15 @@ ipcMain.handle('storage-write', async (_event, data) => {
   fs.writeFileSync(filePath, data, 'utf-8')
 })
 
+ipcMain.handle('storage-delete', async () => {
+  const filePath = getDataPath()
+  try {
+    fs.unlinkSync(filePath)
+  } catch (e) {
+    if (e.code !== 'ENOENT') throw e
+  }
+})
+
 ipcMain.handle('play-video', async (_event, playerPath, videoPath) => {
   return new Promise((resolve, reject) => {
     const child = spawn(playerPath, [videoPath], {

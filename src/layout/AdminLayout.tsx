@@ -1,7 +1,7 @@
-import { Breadcrumb, Button, Layout, Menu, Space, theme, Typography } from 'antd'
+import { Breadcrumb, Button, Layout, Menu, Modal, Space, theme, Typography } from 'antd'
 import { useAppShell } from '../context/AppShellContext'
 import { useGlobalLog } from '../context/GlobalLogContext'
-import { CaretLeftFilled, CaretRightFilled } from '@ant-design/icons'
+import { CaretLeftFilled, CaretRightFilled, QuestionCircleOutlined } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useMemo, useState } from 'react'
@@ -74,6 +74,7 @@ export function AdminLayout() {
   const { contentHeaderRight } = useAppShell()
 
   const [collapsed, setCollapsed] = useState(false)
+  const [docOpen, setDocOpen] = useState(false)
   const isOnPhotos = location.pathname === '/app/photos'
 
   const flat = useMemo(() => flatten(menuItems), [])
@@ -253,6 +254,14 @@ export function AdminLayout() {
           <span />
           <Space>
             <ThemeSwitcher />
+            <Button
+              type="text"
+              size="small"
+              icon={<QuestionCircleOutlined />}
+              onClick={() => setDocOpen(true)}
+              aria-label="打开系统操作文档"
+              title="操作文档"
+            />
             <Typography.Text type="secondary">当前用户：{user!.username}</Typography.Text>
             <Button
               onClick={() => {
@@ -294,6 +303,65 @@ export function AdminLayout() {
           </div>
         </Content>
       </Layout>
+
+      <Modal
+        open={docOpen}
+        title="系统操作文档"
+        footer={null}
+        onCancel={() => setDocOpen(false)}
+        width={760}
+        destroyOnHidden
+      >
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Typography.Text>
+            本系统支持视频、漫画、图片统一管理。建议先在右上角选择数据目录，再开始录入与导出。
+          </Typography.Text>
+
+          <Typography.Title level={5} style={{ margin: 0 }}>
+            一、基础操作
+          </Typography.Title>
+          <Typography.Paragraph style={{ marginBottom: 0 }}>
+            1）右上角两色块用于切换浅色/深色主题。
+            <br />
+            2）左侧菜单用于切换模块；图片管理支持目录树筛选、关键词筛选与排序。
+            <br />
+            3）所有模块优先使用文件句柄引用原文件，减少重复占用空间。
+          </Typography.Paragraph>
+
+          <Typography.Title level={5} style={{ margin: 0 }}>
+            二、图片管理
+          </Typography.Title>
+          <Typography.Paragraph style={{ marginBottom: 0 }}>
+            1）点击“导入图片”可选择文件或文件夹；导入列表支持单项移除与清空列表。
+            <br />
+            2）“复制当前结果”会把当前筛选结果导出到你选定目录，不会从系统中删除原记录。
+            <br />
+            3）超大图片若缩略图生成失败，仍可导入并打开原图。
+          </Typography.Paragraph>
+
+          <Typography.Title level={5} style={{ margin: 0 }}>
+            三、视频 / 漫画管理
+          </Typography.Title>
+          <Typography.Paragraph style={{ marginBottom: 0 }}>
+            1）新增作品时选择本地文件，系统保存引用句柄与元数据。
+            <br />
+            2）可按分类、标签、评分、日期等条件筛选，再批量导出结果。
+            <br />
+            3）选择目录时若关闭系统窗口，属于“取消操作”，系统不会报错并保持当前状态。
+          </Typography.Paragraph>
+
+          <Typography.Title level={5} style={{ margin: 0 }}>
+            四、数据与备份建议
+          </Typography.Title>
+          <Typography.Paragraph style={{ marginBottom: 0 }}>
+            1）建议将数据目录放在稳定磁盘路径，避免频繁变动盘符。
+            <br />
+            2）重要数据定期在系统配置中导出备份。
+            <br />
+            3）迁移电脑时，优先迁移数据目录与备份文件，再重新授权目录访问。
+          </Typography.Paragraph>
+        </Space>
+      </Modal>
     </Layout>
   )
 }

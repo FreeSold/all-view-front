@@ -1,30 +1,19 @@
 import {
+  DeleteOutlined,
   DownloadOutlined,
   FolderOpenOutlined,
   PlayCircleOutlined,
   UploadOutlined,
   VideoCameraOutlined,
 } from '@ant-design/icons'
-import { Alert, Button, Card, Input, Space, Typography, message } from 'antd'
+import { Alert, App, Button, Card, Input, Modal, Space, Typography } from 'antd'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { exportAppData, importAppData, migrateToDataDir } from '../storage/appStore'
+import { exportAppData, importAppData, migrateToDataDir, resetAllApplicationData } from '../storage/appStore'
 import { getRoot, isAppRootSupported, pickRoot } from '../storage/appRoot'
 import { useAppConfig } from '../storage/useAppConfig'
 
-declare global {
-  interface Window {
-    electronAPI?: {
-      selectVideoPlayer: () => Promise<string | null>
-      selectVideoFile: () => Promise<string | null>
-      selectImageFile: () => Promise<string | null>
-      playVideo: (playerPath: string, videoPath: string) => Promise<void>
-      storageRead: () => Promise<string | null>
-      storageWrite: (data: string) => Promise<void>
-    }
-  }
-}
-
 export function SystemConfigPage() {
+  const { message } = App.useApp()
   const [config, updateConfig] = useAppConfig()
   const { videoPlayerPath: playerPath, videoFilePath: videoPath } = config
   const [selectingPlayer, setSelectingPlayer] = useState(false)
@@ -32,6 +21,7 @@ export function SystemConfigPage() {
   const [playing, setPlaying] = useState(false)
   const [dataDirName, setDataDirName] = useState<string>('')
   const [selectingDataDir, setSelectingDataDir] = useState(false)
+  const [clearingData, setClearingData] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const isElectron = typeof window !== 'undefined' && !!window.electronAPI
@@ -137,6 +127,7 @@ export function SystemConfigPage() {
     setSelectingDataDir(true)
     try {
       const h = await pickRoot()
+      if (!h) return
       setDataDirName(h.name)
       const ok = await migrateToDataDir()
       if (ok) {
@@ -149,6 +140,30 @@ export function SystemConfigPage() {
     } finally {
       setSelectingDataDir(false)
     }
+  }, [])
+
+  const handleClearSavedData = useCallback(() => {
+    Modal.confirm({
+      title: '清除保存数据？',
+      content:
+        '将删除：浏览器/Electron 内的应用数据；已选数据目录下的 app-data.json、index.json、tags.json；**整个 library/ 与 thumbs/ 文件夹（含其中所有文件）**；本地视频/图片句柄；并重置「已选目录」。数据目录内其它自建文件/文件夹会保留。此操作不可撤销，请先导出备份。',
+      okText: '清除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        setClearingData(true)
+        try {
+          await resetAllApplicationData()
+          setDataDirName('')
+          message.success('已清除，页面将刷新')
+          window.location.reload()
+        } catch (e) {
+          message.error(e instanceof Error ? e.message : '清除失败')
+        } finally {
+          setClearingData(false)
+        }
+      },
+    })
   }, [])
 
   const handleImportFile = useCallback(
@@ -223,12 +238,15 @@ export function SystemConfigPage() {
         )}
 
         <Card title="数据备份与恢复" size="small">
-          <Space>
+          <Space wrap>
             <Button icon={<DownloadOutlined />} onClick={handleExport}>
               导出备份
             </Button>
             <Button icon={<UploadOutlined />} onClick={handleImport}>
               导入恢复
+            </Button>
+            <Button danger icon={<DeleteOutlined />} onClick={handleClearSavedData} loading={clearingData}>
+              清除保存数据
             </Button>
             <input
               ref={fileInputRef}
@@ -240,6 +258,7 @@ export function SystemConfigPage() {
           </Space>
           <Typography.Text type="secondary" style={{ display: 'block', marginTop: 8, fontSize: 12 }}>
             导出为 JSON 文件保存到本地。已选择数据目录时，数据存于目录内 app-data.json，可整体备份目录。
+            「清除保存数据」会删除 JSON、清空 library/ 与 thumbs/、清除已选目录记录并刷新页面，请先导出备份。
           </Typography.Text>
         </Card>
 

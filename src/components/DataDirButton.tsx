@@ -1,7 +1,7 @@
 import { FolderOpenOutlined } from '@ant-design/icons'
-import { Button, message } from 'antd'
+import { App, Button } from 'antd'
 import { useCallback, useState } from 'react'
-import { migrateToDataDir } from '../storage/appStore'
+import { mergeAppDataFromDataDirAfterPick, migrateToDataDir } from '../storage/appStore'
 import { isAppRootSupported, pickRoot } from '../storage/appRoot'
 
 type DataDirButtonProps = {
@@ -10,6 +10,7 @@ type DataDirButtonProps = {
 }
 
 export function DataDirButton({ onAfterPick }: DataDirButtonProps = {}) {
+  const { message } = App.useApp()
   const [loading, setLoading] = useState(false)
 
   const handleClick = useCallback(async () => {
@@ -19,13 +20,27 @@ export function DataDirButton({ onAfterPick }: DataDirButtonProps = {}) {
     }
     setLoading(true)
     try {
-      await pickRoot()
+      const picked = await pickRoot()
+      if (!picked) return
+      const merged = await mergeAppDataFromDataDirAfterPick()
       const ok = await migrateToDataDir()
+      if (merged && ok) {
+        message.success('已选择数据目录，已加载 app-data.json 并同步到本地，即将刷新页面')
+        onAfterPick?.()
+        window.location.reload()
+        return
+      }
+      if (merged) {
+        message.success('已加载文件夹中的 app-data.json，即将刷新页面')
+        onAfterPick?.()
+        window.location.reload()
+        return
+      }
       if (ok) {
-        message.success('已选择数据目录，数据已迁移')
+        message.success('已选择数据目录，当前数据已写入文件夹')
         onAfterPick?.()
       } else {
-        message.warning('选择成功，但迁移数据失败')
+        message.warning('选择成功，但写入 app-data.json 失败')
         onAfterPick?.()
       }
     } catch (e) {
@@ -33,7 +48,7 @@ export function DataDirButton({ onAfterPick }: DataDirButtonProps = {}) {
     } finally {
       setLoading(false)
     }
-  }, [onAfterPick])
+  }, [onAfterPick, message])
 
   if (!isAppRootSupported()) return null
 

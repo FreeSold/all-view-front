@@ -1,6 +1,7 @@
 import {
   DeleteFilled,
   EditOutlined,
+  ExportOutlined,
   EyeFilled,
   PlayCircleFilled,
   PlusOutlined,
@@ -8,6 +9,7 @@ import {
   SwapOutlined,
 } from '@ant-design/icons'
 import {
+  App,
   Button,
   Card,
   Col,
@@ -23,7 +25,6 @@ import {
   Tag,
   Tooltip,
   Typography,
-  message,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import type { CSSProperties } from 'react'
@@ -37,6 +38,9 @@ import { CoverCropModal } from '../components/CoverCropModal'
 import { MediaAppToolbar } from '../components/MediaAppToolbar'
 import { MediaFilterSortCard, MediaResultsCard } from '../components/media/MediaLibraryChrome'
 import { useAppShell } from '../context/AppShellContext'
+import { buildMediaLibraryExportFolderName } from '../export/mediaExportLabel'
+import { exportFileTasksToUserFolder, isFsDirectoryPickerSupported } from '../export/fsExportCore'
+import { buildWorkMediaExportTasks } from '../export/workMediaExport'
 import {
   collectCategories,
   collectTags,
@@ -127,16 +131,51 @@ function ResizeableTitle(props: ResizeableTitleProps) {
   )
 }
 
-function CoverCell({ coverUrl, coverOriginalUrl, name }: { coverUrl: string; coverOriginalUrl?: string; name: string }) {
+function CoverCell({
+  coverUrl,
+  coverOriginalUrl,
+  name,
+  selected,
+  onToggleSelect,
+}: {
+  coverUrl: string
+  coverOriginalUrl?: string
+  name: string
+  selected?: boolean
+  onToggleSelect?: () => void
+}) {
   return (
-    <Image
-      src={coverUrl}
-      alt={name}
-      width={56}
-      height={78}
-      style={{ objectFit: 'cover', borderRadius: 6, cursor: 'pointer' }}
-      preview={{ mask: '点击放大', src: coverOriginalUrl || coverUrl }}
-    />
+    <div className="media-select-host" style={{ width: 56, height: 78 }}>
+      <Tooltip
+        title={
+          <img
+            src={coverOriginalUrl || coverUrl}
+            alt={name}
+            style={{ width: 300, height: 300, objectFit: 'contain', background: '#111' }}
+          />
+        }
+      >
+        <Image
+          src={coverUrl}
+          alt={name}
+          width={56}
+          height={78}
+          style={{ objectFit: 'cover', borderRadius: 6, cursor: 'pointer' }}
+          preview={{ mask: '点击放大', src: coverOriginalUrl || coverUrl }}
+        />
+      </Tooltip>
+      {onToggleSelect ? (
+        <div
+          role="button"
+          aria-label={selected ? '取消选择' : '选择漫画'}
+          className={`media-select-dot ${selected ? 'is-selected' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggleSelect()
+          }}
+        />
+      ) : null}
+    </div>
   )
 }
 
@@ -355,6 +394,7 @@ function PillList({
 }
 
 export function ComicManagementPage() {
+  const { message } = App.useApp()
   const { token } = theme.useToken()
   const { setContentHeaderRight } = useAppShell()
   const { TextArea } = Input
@@ -372,6 +412,9 @@ export function ComicManagementPage() {
   const [detailMode, setDetailMode] = useState<'create' | 'edit'>('edit')
   const [originalId, setOriginalId] = useState<string | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [exportFilteredLoading, setExportFilteredLoading] = useState(false)
+  const [exportSelectedLoading, setExportSelectedLoading] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
 
   const comicUi = useMemo(
     () => mergeMediaUi(getAppData().mediaUi?.comic),
@@ -482,6 +525,17 @@ export function ComicManagementPage() {
     )
   }, [comics, comicUi])
 
+  const selectedFilteredComics = useMemo(() => {
+    if (!selectedIds.length) return []
+    const idSet = new Set(selectedIds)
+    return filtered.filter((v) => idSet.has(v.id))
+  }, [selectedIds, filtered])
+
+  useEffect(() => {
+    const idSet = new Set(comics.map((v) => v.id))
+    setSelectedIds((prev) => prev.filter((id) => idSet.has(id)))
+  }, [comics])
+
   const hasPanelFilters = Boolean(
     (comicUi.categoryFilters ?? []).length ||
       (comicUi.tagFilters ?? []).length ||
@@ -495,6 +549,103 @@ export function ComicManagementPage() {
       createdRange: undefined,
     })
   }, [patchComicUi])
+
+  const handleExportFilteredComics = useCallback(async () => {
+    if (!filtered.length) {
+      message.warning('当前没有可导出的漫画')
+      return
+    }
+    if (!isFsDirectoryPickerSupported()) {
+      message.info('请使用 Chrome 或 Edge，并允许选择保存文件夹')
+      return
+    }
+    setExportFilteredLoading(true)
+    try {
+      const folderName = buildMediaLibraryExportFolderName(comicUi, 'comic')
+      const { tasks, skipMessages } = buildWorkMediaExportTasks(filtered, isElectron)
+      if (!tasks.length) {
+        message.warning(
+          skipMessages[0] ??
+            '没有可导出的文件（封面/资源需为网络地址、或浏览器内授权的本地文件句柄）',
+        )
+        return
+      }
+      const result = await exportFileTasksToUserFolder(tasks, folderName)
+      if (result == null) return
+      if (result.ok === 0 && result.errors.length) {
+        message.error(result.errors[0] ?? '导出失败')
+        return
+      }
+      const parts = [`已导出 ${result.ok} 个文件到「${result.folderName}」`]
+      if (result.fail) parts.push(`失败 ${result.fail}`)
+      message.success(parts.join('；'))
+      if (result.errors.length) console.warn(result.errors)
+      if (skipMessages.length) {
+        message.info('部分资源已跳过（如仅桌面路径），详情见控制台')
+        console.warn(skipMessages)
+      }
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setExportFilteredLoading(false)
+    }
+  }, [filtered, comicUi, isElectron])
+
+  const handleExportSelectedComics = useCallback(async () => {
+    if (!selectedFilteredComics.length) {
+      message.warning('请先选择要导出的漫画')
+      return
+    }
+    if (!isFsDirectoryPickerSupported()) {
+      message.info('请使用 Chrome 或 Edge，并允许选择保存文件夹')
+      return
+    }
+    setExportSelectedLoading(true)
+    try {
+      const folderName = `${buildMediaLibraryExportFolderName(comicUi, 'comic')}_已选`
+      const { tasks, skipMessages } = buildWorkMediaExportTasks(selectedFilteredComics, isElectron)
+      if (!tasks.length) {
+        message.warning(skipMessages[0] ?? '没有可导出的文件')
+        return
+      }
+      const result = await exportFileTasksToUserFolder(tasks, folderName)
+      if (result == null) return
+      if (result.ok === 0 && result.errors.length) {
+        message.error(result.errors[0] ?? '导出失败')
+        return
+      }
+      const parts = [`已导出已选 ${result.ok} 个文件到「${result.folderName}」`]
+      if (result.fail) parts.push(`失败 ${result.fail}`)
+      message.success(parts.join('；'))
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setExportSelectedLoading(false)
+    }
+  }, [selectedFilteredComics, comicUi, isElectron, message])
+
+  const handleDeleteSelectedComics = useCallback(() => {
+    if (!selectedFilteredComics.length) {
+      message.warning('请先选择要删除的漫画')
+      return
+    }
+    Modal.confirm({
+      title: '确认删除已选漫画？',
+      content: `将删除 ${selectedFilteredComics.length} 条漫画记录。`,
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: () => {
+        const idSet = new Set(selectedFilteredComics.map((x) => x.id))
+        updateAppData((d) => {
+          d.comics = d.comics.filter((x) => !idSet.has(x.id))
+        })
+        setSelectedIds((prev) => prev.filter((id) => !idSet.has(id)))
+        setRefreshKey((k) => k + 1)
+        message.success(`已删除 ${selectedFilteredComics.length} 条记录`)
+      },
+    })
+  }, [selectedFilteredComics, message])
 
   const toggleCategoryFilter = useCallback(
     (cat: string) => {
@@ -932,7 +1083,17 @@ export function ComicManagementPage() {
         width: colWidths.cover,
         onResize: handleResize('cover'),
       }),
-      render: (_: string, r) => <CoverCell coverUrl={r.coverUrl} coverOriginalUrl={r.coverOriginalUrl} name={r.name} />,
+      render: (_: string, r) => (
+        <CoverCell
+          coverUrl={r.coverUrl}
+          coverOriginalUrl={r.coverOriginalUrl}
+          name={r.name}
+          selected={selectedIds.includes(r.id)}
+          onToggleSelect={() =>
+            setSelectedIds((prev) => (prev.includes(r.id) ? prev.filter((id) => id !== r.id) : [...prev, r.id]))
+          }
+        />
+      ),
     },
     {
       title: '漫画名称',
@@ -1180,6 +1341,26 @@ export function ComicManagementPage() {
         title={`${filtered.length} 部`}
         extra={
           <Space wrap size={4} style={{ justifyContent: 'flex-end' }}>
+            {selectedFilteredComics.length > 0 ? (
+              <Tag color="processing">已选 {selectedFilteredComics.length}</Tag>
+            ) : null}
+            <Button size="small" disabled={!filtered.length} onClick={() => setSelectedIds(filtered.map((v) => v.id))}>
+              全选当前结果
+            </Button>
+            <Button size="small" disabled={!selectedIds.length} onClick={() => setSelectedIds([])}>
+              清空选择
+            </Button>
+            <Button
+              size="small"
+              loading={exportSelectedLoading}
+              disabled={!selectedFilteredComics.length}
+              onClick={() => void handleExportSelectedComics()}
+            >
+              导出已选
+            </Button>
+            <Button size="small" danger disabled={!selectedFilteredComics.length} onClick={handleDeleteSelectedComics}>
+              删除已选
+            </Button>
             {viewMode === 'list' ? (
               <Select
                 size="small"
@@ -1203,6 +1384,14 @@ export function ComicManagementPage() {
               ]}
               style={{ width: 88 }}
             />
+            <Button
+              size="small"
+              icon={<ExportOutlined />}
+              loading={exportFilteredLoading}
+              onClick={() => void handleExportFilteredComics()}
+            >
+              导出当前结果
+            </Button>
           </Space>
         }
       >
@@ -1237,12 +1426,35 @@ export function ComicManagementPage() {
                     size="small"
                     hoverable
                     cover={
-                      <Image
-                        src={v.coverUrl}
-                        alt={v.name}
-                        style={{ height: 200, objectFit: 'cover' }}
-                        preview={{ mask: '放大' }}
-                      />
+                      <div className="media-select-host">
+                        <Tooltip
+                          title={
+                            <img
+                              src={v.coverOriginalUrl || v.coverUrl}
+                              alt={v.name}
+                              style={{ width: 300, height: 300, objectFit: 'contain', background: '#111' }}
+                            />
+                          }
+                        >
+                          <Image
+                            src={v.coverUrl}
+                            alt={v.name}
+                            style={{ height: 200, objectFit: 'cover' }}
+                            preview={{ mask: '放大' }}
+                          />
+                        </Tooltip>
+                        <div
+                          role="button"
+                          aria-label={selectedIds.includes(v.id) ? '取消选择' : '选择漫画'}
+                          className={`media-select-dot ${selectedIds.includes(v.id) ? 'is-selected' : ''}`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setSelectedIds((prev) =>
+                              prev.includes(v.id) ? prev.filter((id) => id !== v.id) : [...prev, v.id],
+                            )
+                          }}
+                        />
+                      </div>
                     }
                   >
                     <Card.Meta

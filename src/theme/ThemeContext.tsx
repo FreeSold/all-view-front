@@ -57,6 +57,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, mode)
+    if (typeof document !== 'undefined') {
+      document.documentElement.setAttribute('data-theme-mode', mode)
+    }
   }, [mode])
 
   const value = useMemo<ThemeContextValue>(

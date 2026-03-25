@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useGlobalLog } from '../../context/GlobalLogContext'
-import { migrateToDataDir } from '../../storage/appStore'
-import { PhotoFsRepo, isFileSystemAccessSupported } from '../../storage/photoFsRepo'
+import { ensureDirectoryPermission, isElectronShell } from '../../storage/appRoot'
+import { mergeAppDataFromDataDirAfterPick, migrateToDataDir } from '../../storage/appStore'
+import { removeLocalVideoHandle, saveLocalVideoHandle } from '../../storage/localFileStore'
+import { PhotoFsRepo, isFileSystemAccessSupported, type PhotoImportPickItem } from '../../storage/photoFsRepo'
 import { buildDerived } from '../../storage/photoDerived'
-import { createThumbnailWebp } from '../../util/photoThumb'
+import { sniffImageDimensionsFromFile, tryCreateThumbnailWebp } from '../../util/photoThumb'
 import { extOf, computeAutoTags } from '../../util/photoTags'
 import { nanoid } from '../../util/photoId'
 import type {
@@ -66,27 +68,24 @@ export function usePhotoState() {
   })
   const [index, setIndex] = useState<PhotoIndex>(DEFAULT_INDEX)
   const [tags, setTags] = useState<PhotoTags>(DEFAULT_TAGS)
+  /**
+   * Electron 下重启后目录句柄权限会重置为 prompt，需用户手势 requestPermission。
+   * needsReauth=true 时工具栏显示「重新授权」按钮，用户点击即可恢复访问。
+   */
+  const [needsReauth, setNeedsReauth] = useState(false)
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const indexRef = useRef(index)
   const tagsRef = useRef(tags)
   const fsRef = useRef(fs)
 
-  useEffect(() => {
-    indexRef.current = index
-  }, [index])
-  useEffect(() => {
-    tagsRef.current = tags
-  }, [tags])
-  useEffect(() => {
-    fsRef.current = fs
-  }, [fs])
+  useEffect(() => { indexRef.current = index }, [index])
+  useEffect(() => { tagsRef.current = tags }, [tags])
+  useEffect(() => { fsRef.current = fs }, [fs])
 
   const derived = buildDerived({ index, tags })
 
   const log = useCallback(
-    (msg: string) => {
-      appendGlobalLog(msg)
-    },
+    (msg: string) => { appendGlobalLog(msg) },
     [appendGlobalLog]
   )
 
@@ -131,20 +130,59 @@ export function usePhotoState() {
 
   const loadAll = useCallback(async () => {
     const handle = await repo.tryRestoreRoot()
-    if (handle) {
-      setFs({ rootHandle: handle, rootName: handle.name })
-      try {
-        const { index: loadedIndex, tags: loadedTags } = await repo.loadAll()
-        await applyLoadedIndexAndTags(loadedIndex, loadedTags)
-      } catch (e) {
-        log(`加载失败：${String(e)}。若更换浏览器或未授权目录，请点击「选择数据目录」重新选择同一文件夹。`)
-      }
+    if (!handle) return
+    setFs({ rootHandle: handle, rootName: handle.name })
+    const canAccess = await ensureDirectoryPermission(handle, true, false)
+    if (!canAccess) {
+      /**
+       * Electron 重启后句柄权限会重置为 prompt；浏览器通常持久化权限不受此影响。
+       * 无用户手势时不能调用 requestPermission，只能提示用户点击「重新授权」按钮。
+       */
+      setNeedsReauth(true)
+      log(
+        isElectronShell()
+          ? '已记住数据目录，但 Electron 重启后目录权限需要重新授权。请点击「重新授权」按钮恢复访问。'
+          : '已记住数据目录，但需重新授权：请点击「选择数据目录」并再次选择同一文件夹。',
+      )
+      return
+    }
+    setNeedsReauth(false)
+    try {
+      const { index: loadedIndex, tags: loadedTags } = await repo.loadAll()
+      await applyLoadedIndexAndTags(loadedIndex, loadedTags)
+    } catch (e) {
+      log(`加载失败：${String(e)}。请点击「选择数据目录」重新选择同一文件夹以授权访问。`)
     }
   }, [repo, log, applyLoadedIndexAndTags])
 
   useEffect(() => {
     loadAll()
   }, [loadAll])
+
+  /**
+   * 在 Electron 下用户点击「重新授权」按钮时调用（需要用户手势才能 requestPermission）。
+   * 成功后直接加载目录内容，无需重新选择文件夹。
+   */
+  const reauth = useCallback(async () => {
+    const handle = repo.rootHandle
+    if (!handle) {
+      log('未找到已记住的数据目录，请重新选择。')
+      return
+    }
+    try {
+      const granted = await ensureDirectoryPermission(handle, true, true)
+      if (granted) {
+        setNeedsReauth(false)
+        const { index: loadedIndex, tags: loadedTags } = await repo.loadAll()
+        await applyLoadedIndexAndTags(loadedIndex, loadedTags)
+        log(`已恢复对「${handle.name}」的访问权限。`)
+      } else {
+        log('授权被拒绝，请尝试重新选择数据目录。')
+      }
+    } catch (e) {
+      log(`授权出错：${String(e)}，请尝试重新选择数据目录。`)
+    }
+  }, [repo, log, applyLoadedIndexAndTags])
 
   const pickRoot = useCallback(async () => {
     if (!isFileSystemAccessSupported()) {
@@ -153,9 +191,29 @@ export function usePhotoState() {
     }
     try {
       const handle = await repo.pickRoot()
+      if (!handle) return
       setFs({ rootHandle: handle, rootName: handle.name })
+      setNeedsReauth(false)
       await repo.ensureDirs()
+      const merged = await mergeAppDataFromDataDirAfterPick()
       await migrateToDataDir()
+      if (merged) {
+        if (isElectronShell()) {
+          /**
+           * Electron：window.location.reload() 会让渲染进程重新初始化，
+           * 导致刚刚授权的句柄权限再次重置为 prompt，从而陷入死循环。
+           * 直接更新照片状态即可；视频/漫画等的 appStore.cached 已由
+           * mergeAppDataFromDataDirAfterPick 写入，导航到对应页面时会读取最新数据。
+           */
+          const { index: loadedIndex, tags: loadedTags } = await repo.loadAll()
+          await applyLoadedIndexAndTags(loadedIndex, loadedTags)
+          log('已从数据目录同步 app-data.json，已加载图片索引。')
+        } else {
+          log('已从数据目录加载 app-data.json，正在刷新页面以同步作品库…')
+          window.location.reload()
+        }
+        return
+      }
       const { index: loadedIndex, tags: loadedTags } = await repo.loadAll()
       await applyLoadedIndexAndTags(loadedIndex, loadedTags)
       log('已选择数据目录')
@@ -285,9 +343,31 @@ export function usePhotoState() {
     [tags]
   )
 
+  /** 移动导出等：从索引中移除条目 */
+  const removeImagesByIds = useCallback(
+    (ids: string[]) => {
+      if (!ids.length) return
+      const idSet = new Set(ids)
+      setIndex((prev: PhotoIndex) => ({
+        ...prev,
+        images: prev.images.filter((x) => !idSet.has(x.id)),
+      }))
+      persistSoon()
+    },
+    [persistSoon]
+  )
+
+  /**
+   * 仅保存文件句柄与索引（不写 library 原图），缩略图写入 thumbs/ 以便列表流畅。
+   * 若有成功导入，会把文件夹视图切回「全部」：否则新图在 library/ref/... 下，若仍停留在旧路径子文件夹会看不到。
+   */
   const importFiles = useCallback(
-    async (files: File[]) => {
-      if (!fs.rootHandle || !files.length) return
+    async (
+      items: PhotoImportPickItem[],
+      options?: { userTagsByVirtualPath?: Record<string, string[]> }
+    ): Promise<{ ok: number; skipped: number; fail: number }> => {
+      const empty = { ok: 0, skipped: 0, fail: 0 }
+      if (!fs.rootHandle || !items.length) return empty
       await repo.ensureDirs()
 
       const byHash = new Map(
@@ -296,32 +376,40 @@ export function usePhotoState() {
           .filter(([, x]) => x != null)
       )
 
-      for (const file of files) {
+      let ok = 0
+      let skipped = 0
+      let fail = 0
+
+      for (const item of items) {
+        const file = item.file
+        let savedSourceId: string | undefined
         try {
           const hash = await repo.hashFile(file)
           if (hash && byHash.has(hash)) {
+            skipped += 1
             log(`跳过重复：${file.name}`)
             continue
           }
 
           const ext = extOf(file.name)
           const createdAt = file.lastModified ?? Date.now()
-          const date = new Date(createdAt)
-          const yyyy = String(date.getFullYear())
-          const mm = String(date.getMonth() + 1).padStart(2, '0')
-          const dd = String(date.getDate()).padStart(2, '0')
-          const baseName = (file.name.replace(/\.[^.]+$/, '') || 'img')
-            .replace(/[\\/:*?"<>|]+/g, '_')
-            .slice(0, 80) || 'img'
           const id = nanoid()
-          const fileName = `${baseName}__${id}.${ext || 'bin'}`
-          const libraryRelPath = `library/${yyyy}/${mm}/${dd}/${fileName}`
+          const sourceId = `photo_${id}`
+          const sourceRef = `local-handle:${sourceId}`
 
-          await repo.copyIntoLibrary(file, libraryRelPath)
+          const thumbBlob = await tryCreateThumbnailWebp(file, 300)
+          if (!thumbBlob) {
+            log(`缩略图未生成（大图解码限制），仍可打开原图：${file.name}`)
+          }
 
-          const thumbRel = `thumbs/${hash || id}.webp`
-          const thumbBlob = await createThumbnailWebp(file, 300)
-          await repo.writeBlob(thumbRel, thumbBlob)
+          await saveLocalVideoHandle(sourceId, item.handle)
+          savedSourceId = sourceId
+
+          let thumbRelPath: string | undefined
+          if (thumbBlob) {
+            thumbRelPath = `thumbs/${hash || id}.webp`
+            await repo.writeBlob(thumbRelPath, thumbBlob)
+          }
 
           const dims = await getImageDims(file).catch(() => ({ width: 0, height: 0 }))
           const orient =
@@ -341,26 +429,35 @@ export function usePhotoState() {
             orientation: orient as 'landscape' | 'portrait' | 'unknown',
             createdAt,
             importedAt: Date.now(),
-            libraryRelPath,
-            thumbRelPath: thumbRel,
+            libraryRelPath: item.virtualLibraryRelPath,
+            sourceRef,
+            ...(thumbRelPath ? { thumbRelPath } : {}),
             hash,
             autoTags: computeAutoTags({
               width: dims.width,
               height: dims.height,
             }),
-            userTags: [],
+            userTags: normalizeImportTags(options?.userTagsByVirtualPath?.[item.virtualLibraryRelPath] ?? []),
           }
           byHash.set(hash, img)
           setIndex((prev) => ({ ...prev, images: [...prev.images, img] }))
+          ok += 1
           log(`已导入：${file.name}`)
         } catch (e) {
+          if (savedSourceId) await removeLocalVideoHandle(savedSourceId).catch(() => {})
+          fail += 1
           log(`导入失败 ${file.name}：${String(e)}`)
         }
       }
 
+      if (ok > 0) {
+        setUi({ activeFolderId: 'all' })
+      }
+
       persistSoon()
+      return { ok, skipped, fail }
     },
-    [fs.rootHandle, index.images, repo, log, persistSoon]
+    [fs.rootHandle, index.images, repo, log, persistSoon, setUi]
   )
 
   return {
@@ -372,6 +469,8 @@ export function usePhotoState() {
     repo,
     loadAll,
     pickRoot,
+    reauth,
+    needsReauth,
     setUi,
     setFilters,
     clearFilters,
@@ -380,11 +479,14 @@ export function usePhotoState() {
     removeUserTag,
     getTagSuggestions,
     importFiles,
+    removeImagesByIds,
     isSupported: isFileSystemAccessSupported(),
   }
 }
 
 async function getImageDims(file: File): Promise<{ width: number; height: number }> {
+  const sniffed = await sniffImageDimensionsFromFile(file)
+  if (sniffed) return sniffed
   const url = URL.createObjectURL(file)
   try {
     const img = new Image()
@@ -395,4 +497,11 @@ async function getImageDims(file: File): Promise<{ width: number; height: number
   } finally {
     URL.revokeObjectURL(url)
   }
+}
+
+function normalizeImportTags(tags: string[]): string[] {
+  const cleaned = tags
+    .map((x) => String(x ?? '').trim())
+    .filter(Boolean)
+  return Array.from(new Set(cleaned))
 }

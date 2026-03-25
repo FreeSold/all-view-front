@@ -9,7 +9,14 @@ export type PhotoImage = {
   orientation?: 'landscape' | 'portrait' | 'unknown'
   createdAt?: number
   importedAt?: number
+  /**
+   * 展示/筛选用虚拟路径（以 library/ 开头）。
+   * - 新版「仅引用」：`library/ref/...`，原图在 IndexedDB 句柄 `sourceRef`
+   * - 旧版：真实复制的 `library/年/月/日/...` 文件
+   */
   libraryRelPath: string
+  /** 若存在：原图仅保存在本地文件句柄（local-handle:photo_xxx），不复制到 library/ */
+  sourceRef?: string
   thumbRelPath?: string
   hash?: string
   autoTags?: string[]

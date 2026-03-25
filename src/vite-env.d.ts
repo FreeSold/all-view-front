@@ -44,6 +44,7 @@ interface FileSystemDirectoryHandle {
   readonly name: string
   getFileHandle(name: string, opts?: { create?: boolean }): Promise<FileSystemFileHandle>
   getDirectoryHandle(name: string, opts?: { create?: boolean }): Promise<FileSystemDirectoryHandle>
+  removeEntry(name: string, options?: { recursive?: boolean }): Promise<void>
   values(): AsyncIterableIterator<FileSystemFileHandle | FileSystemDirectoryHandle>
   queryPermission?(descriptor?: { mode?: 'read' | 'readwrite' }): Promise<PermissionState>
   requestPermission?(descriptor?: { mode?: 'read' | 'readwrite' }): Promise<PermissionState>
@@ -52,4 +53,14 @@ interface FileSystemDirectoryHandle {
 interface Window {
   showOpenFilePicker?(options?: FilePickerOptions): Promise<FileSystemFileHandle[]>
   showDirectoryPicker?(options?: { mode?: 'read' | 'readwrite' }): Promise<FileSystemDirectoryHandle>
+  /** Electron preload 注入 */
+  electronAPI?: {
+    selectVideoPlayer: () => Promise<string | null>
+    selectVideoFile: () => Promise<string | null>
+    selectImageFile: () => Promise<string | null>
+    playVideo: (playerPath: string, videoPath: string) => Promise<void>
+    storageRead: () => Promise<string | null>
+    storageWrite: (data: string) => Promise<void>
+    storageDelete: () => Promise<void>
+  }
 }

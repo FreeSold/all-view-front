@@ -4,7 +4,15 @@
  * - 浏览器：优先使用用户选择的数据目录（app-data.json），否则 localStorage
  */
 import type { AppData, AppConfig, Comic, Video } from './types'
-import { getRoot, readAppData, writeAppData } from './appRoot'
+import {
+  clearPersistedRootHandle,
+  getRoot,
+  readAppData,
+  removeKnownJsonFromDataDir,
+  removeLibraryAndThumbsFromDataDir,
+  writeAppData,
+} from './appRoot'
+import { clearAllLocalVideoHandles } from './localFileStore'
 
 const BROWSER_STORAGE_KEY = 'all-view-front/app-data'
 const LEGACY_STORAGE_KEY = 'all-view-front/mock-db'
@@ -247,7 +255,7 @@ function debouncedSave() {
       const root = await getRoot()
       if (root) {
         try {
-          await writeAppData(JSON.stringify(cached))
+          await writeAppData(JSON.stringify(cached), false)
         } catch (e) {
           console.warn('appStore: save to data dir failed', e)
           saveToBrowser(cached)
@@ -302,12 +310,92 @@ export function importAppData(json: string): AppData | null {
   return cached
 }
 
-/** 将当前数据迁移到数据目录（选择数据目录后调用） */
+/** 将当前数据迁移到数据目录（选择数据目录后调用，需用户手势后 allowRequest） */
 export async function migrateToDataDir(): Promise<boolean> {
   try {
-    await writeAppData(JSON.stringify(cached))
+    await writeAppData(JSON.stringify(cached), true)
     return true
   } catch {
     return false
   }
+}
+
+/**
+ * 用户刚通过「选择数据目录」授权后：读取该目录下已有 app-data.json（若存在）并载入内存，
+ * 同时写入 Electron 侧 app-data.json，便于 exe 与浏览器共用同一数据文件夹。
+ */
+export async function mergeAppDataFromDataDirAfterPick(): Promise<boolean> {
+  try {
+    const raw = await readAppData(true)
+    if (!raw) return false
+    const data = parseData(raw)
+    if (!data) return false
+    cached = data
+    if (typeof window !== 'undefined' && window.electronAPI?.storageWrite) {
+      await window.electronAPI.storageWrite(JSON.stringify(cached))
+    }
+    debouncedSave()
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Electron 启动：exe 旁先读了 app-data.json 后，若 IndexedDB 里仍有上次选过的数据目录，
+ * 尝试读取目录内 app-data.json 并写回 exe，使视频/漫画等与便携文件夹一致（无需先点「选择目录」）。
+ */
+export async function trySyncAppDataFromPersistedRootOnElectronStartup(): Promise<void> {
+  if (typeof window === 'undefined' || !window.electronAPI?.storageWrite) return
+  try {
+    const raw = await readAppData(false)
+    if (!raw) return
+    const data = parseData(raw)
+    if (!data) return
+    cached = data
+    await window.electronAPI.storageWrite(JSON.stringify(cached))
+  } catch {
+    // 无权限或目录不可读时忽略，用户可再选目录
+  }
+}
+
+/**
+ * 清除所有本地持久化数据：数据目录内 JSON、**library/ 与 thumbs/ 整棵子树**（递归删除）、
+ * 浏览器 localStorage、IndexedDB 中的目录句柄与本地视频句柄、Electron 侧 app-data.json；
+ * 内存中的缓存重置为默认数据。调用后建议 `location.reload()`。
+ */
+export async function resetAllApplicationData(): Promise<void> {
+  if (saveTimer) {
+    clearTimeout(saveTimer)
+    saveTimer = null
+  }
+
+  await removeKnownJsonFromDataDir(true)
+  await removeLibraryAndThumbsFromDataDir(true)
+  await clearPersistedRootHandle()
+
+  try {
+    localStorage.removeItem(BROWSER_STORAGE_KEY)
+    localStorage.removeItem(LEGACY_STORAGE_KEY)
+    localStorage.removeItem('all-view-front/video-player-path')
+    localStorage.removeItem('all-view-front/video-file-path')
+  } catch {
+    // ignore
+  }
+
+  try {
+    await clearAllLocalVideoHandles()
+  } catch {
+    // ignore
+  }
+
+  if (typeof window !== 'undefined' && window.electronAPI?.storageDelete) {
+    try {
+      await window.electronAPI.storageDelete()
+    } catch (e) {
+      console.warn('appStore: storageDelete failed', e)
+    }
+  }
+
+  cached = getDefaultData()
 }
